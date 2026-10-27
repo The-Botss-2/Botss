@@ -1,0 +1,36 @@
+{
+  "name": "botss-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Botss: a local-first AI software team that runs on your own Claude Code subscription",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "build": "pnpm --filter @botss/dashboard build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter @botss/dashboard typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:e2e": "pnpm --filter @botss/dashboard e2e",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "botss": "node --disable-warning=ExperimentalWarning packages/cli/src/main.ts"
+  },
+  "devDependencies": {
+    "@botss/core": "workspace:*",
+    "@botss/server": "workspace:*",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  }
+}

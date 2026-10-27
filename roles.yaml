@@ -1,0 +1,92 @@
+# Which skills each Botss role loads, and the defaults the orchestrator uses
+# when it starts that role as a headless `claude -p` process.
+#
+# skills:      loaded in this order (team-protocol always first)
+# phase:       when the role is active in the project flow
+# writes:      paths the role may change by default. A task's `owns` and `may_touch`
+#              extend these for that task only (for example an integration task, or T000).
+# max_parallel: default cap on concurrent agents of this role (quota guard)
+# A task has exactly one role.
+
+# Gitignored scratch areas every role may write. The botss CLI reads files passed with
+# --handoff, --file, or --report and stores them on the board; they are never committed.
+scratch_paths:
+  - ".botss/handoffs/**"   # handoff notes: .botss/handoffs/<task>.md
+  - ".botss/reviews/**"    # review, QA, and bug report files
+  - ".botss/screens/**"    # screenshots for design review and QA evidence
+
+roles:
+  pm:
+    title: Product Manager
+    phase: [discovery, planning]
+    skills: [team-protocol, product-manager]
+    writes: [".botss/docs/prd.md", ".botss/docs/discovery/**"]
+    max_parallel: 1
+
+  tech-lead:
+    title: Tech Lead / Architect
+    phase: [planning, build, merge]
+    skills: [team-protocol, tech-lead, engineering-discipline]
+    writes: [".botss/docs/architecture.md", ".botss/docs/contracts/**", ".botss/docs/decisions/**", ".botss/docs/plan-summary.md", ".botss/tasks/**"]
+    # T000 (app scaffold) and integration tasks list their code paths in `owns`.
+    max_parallel: 1
+
+  designer:
+    title: UI/UX Designer
+    phase: [planning, build]
+    skills: [team-protocol, ui-ux-designer]
+    writes: [".botss/docs/design/**", ".botss/docs/contracts/design-tokens.json"]
+    max_parallel: 1
+
+  backend:
+    title: Backend Engineer
+    phase: [build]
+    skills: [team-protocol, engineering-discipline, backend-engineer]
+    writes: ["backend/**"]
+    max_parallel: 2
+
+  frontend:
+    title: Frontend Engineer
+    phase: [build]
+    skills: [team-protocol, engineering-discipline, frontend-engineer]
+    writes: ["frontend/**"]
+    max_parallel: 2
+
+  qa:
+    title: QA Engineer
+    phase: [build, verify]
+    skills: [team-protocol, engineering-discipline, qa-engineer]
+    writes: ["e2e/**", "backend/tests/**", "frontend/**/*.test.*", ".botss/docs/qa/**"]
+    max_parallel: 1
+
+  reviewer:
+    title: Code Reviewer
+    phase: [review]
+    skills: [team-protocol, code-reviewer]
+    writes: []          # read only for code; review files go in scratch (.botss/reviews/), comments via `botss review`
+    max_parallel: 1
+
+  devops:
+    title: DevOps Engineer
+    phase: [planning, build, release]   # owns T001, the infra scaffold, after T000
+    skills: [team-protocol, engineering-discipline, devops-engineer]
+    writes: ["docker-compose*.yml", "**/Dockerfile", "**/.dockerignore", ".github/workflows/**", "Makefile", ".env.example", "infra/**"]
+    max_parallel: 1
+
+  security:
+    title: Security Engineer (optional)
+    phase: [review, release]
+    skills: [team-protocol, security-engineer]
+    writes: [".botss/docs/security/**"]
+    max_parallel: 1
+
+# Default stack the planning roles propose unless the human picks another.
+default_stack:
+  frontend: "Next.js 16 (App Router) + TypeScript + Tailwind CSS v4"
+  backend: "FastAPI + Pydantic v2 + SQLAlchemy 2.0 + Alembic"
+  database: "PostgreSQL"
+  tooling: "uv (Python), pnpm (Node), Docker Compose for local dev"
+  testing: "pytest + httpx, Vitest + Testing Library, Playwright for e2e"
+  auth: "Server-side sessions: opaque token in httpOnly botss_session cookie, hashed in a sessions table"
+  browser_to_api: "Same origin: next.config rewrites /api/:path* to API_INTERNAL_URL; no CORS"
+  environments: [local, test, ci, production]
