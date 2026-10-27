@@ -214,7 +214,8 @@ async function main(): Promise<number> {
     } else if ("sleep" in s) {
       await new Promise((res) => setTimeout(res, s.sleep));
     } else if ("hang" in s) {
-      await new Promise(() => {});
+      // A pending promise alone does not keep Node alive; a timer does.
+      await new Promise(() => setInterval(() => {}, 60_000));
     } else if ("rateLimit" in s) {
       out({ type: "rate_limit_event", rate_limit_info: { status: s.rateLimit.status, resetsAt: Math.floor(Date.now() / 1000) + (s.rateLimit.inSeconds ?? 60) } });
     } else if ("usageLimit" in s) {

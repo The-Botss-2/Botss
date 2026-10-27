@@ -197,6 +197,7 @@ function checkBash(command: string, ctx: GuardContext, cwd: string): GuardResult
     return deny("reading Claude credentials or config (~/.claude) is never allowed");
   }
   if (/botss\.db\b/.test(command)) return deny("never touch .botss/botss.db; the botss CLI is the only writer of board state");
+  if (/guard\.json|\.botss[\\/]runs\b|BOTSS_GUARD_FILE|disableAllHooks/.test(command)) return deny("the run's guard and hook configuration are off limits");
 
   for (const words of splitCommands(command)) {
     const { env, argv } = stripPrefix(words);

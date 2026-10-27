@@ -99,6 +99,8 @@ describe("guard: bash", () => {
     ["cat $HOME/.claude/settings.json", false],
     ["sqlite3 .botss/botss.db 'update tasks set status=1'", false],
     ["bash -c 'git push --force'", false],
+    ["echo '{}' > ../../.botss/runs/R-00001/guard.json", false],
+    ["unset BOTSS_GUARD_FILE", false],
     ["echo $(git push -f)", false],
     ["uv run pytest -q", true],
     ["botss task done T012 --status DONE --handoff .botss/handoffs/T012.md", true],

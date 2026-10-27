@@ -11,5 +11,9 @@
     "@botss/core": "workspace:*",
     "@botss/server": "workspace:*",
     "yaml": "^2.9.1"
-  }
+  },
+  "bin": {
+    "botss": "./bin/botss.js"
+  },
+  "description": "The botss CLI"
 }

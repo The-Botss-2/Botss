@@ -38,6 +38,11 @@ describe("parseTaskFile", () => {
     expect(r.problems[0]).toMatchObject({ code: "role", tasks: ["T003"] });
   });
 
+  it("accepts a UTF-8 byte order mark and CRLF line endings", () => {
+    const src = String.fromCharCode(0xfeff) + task("T001").source.replace(/\n/g, "\r\n");
+    expect(parseTaskFile(src).task?.id).toBe("T001");
+  });
+
   it("rejects files without frontmatter", () => {
     expect(parseTaskFile("# just markdown", "x.md").problems[0]!.code).toBe("parse");
   });

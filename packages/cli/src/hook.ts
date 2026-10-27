@@ -1,4 +1,4 @@
-import { guardDecision, type GuardContext } from "@botss/core";
+import { guardDecision, type GuardContext } from "@botss/core/guard";
 import fs from "node:fs";
 import path from "node:path";
 

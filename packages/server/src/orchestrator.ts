@@ -20,7 +20,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { commitAll, diffNames, diffStat, ensureWorktree, git, headSha, INTEGRATION_BRANCH, removeWorktree } from "./git.ts";
+import {
+  commitAll,
+  diffNames,
+  diffStat,
+  ensureWorktree,
+  git,
+  headSha,
+  INTEGRATION_BRANCH,
+  removeWorktree,
+} from "./git.ts";
 import { cliCommand, quoteArg } from "./paths.ts";
 import { agentRuntimeEnv, allocatePortBlock } from "./ports.ts";
 import type { Project } from "./project.ts";
@@ -52,6 +61,7 @@ interface ActiveRun {
 export class Orchestrator {
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
+  private stopped = false;
   private active = new Map<string, ActiveRun>();
   private mergeChain: Promise<unknown> = Promise.resolve();
   /** Resolves when all pending run finalizations are done (tests use it). */
@@ -78,8 +88,10 @@ export class Orchestrator {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.stopped = true;
     await this.p.runner.killAll();
     await this.idle();
+    while (this.ticking) await new Promise((r) => setTimeout(r, 20));
   }
 
   async idle(): Promise<void> {
@@ -98,10 +110,21 @@ export class Orchestrator {
     for (const r of this.svc.runs({ active: true })) {
       this.svc.updateRun(r.id, { ended_at: new Date().toISOString(), result_status: "interrupted" });
       this.svc.updateAgent(r.agent, { current_run: null, status: "idle" });
-      if (r.task) this.prepareRetry(r.task, r.session_id, "Botss restarted while you were working. Continue the task from where you left off (check `git status` and `botss task show $BOTSS_TASK`).");
-      this.svc.emit("run.interrupted", `Run ${r.id} (${r.agent}) was interrupted by a restart`, {}, { actor: r.agent, task: r.task, run: r.id });
+      if (r.task)
+        this.prepareRetry(
+          r.task,
+          r.session_id,
+          "Botss restarted while you were working. Continue the task from where you left off (check `git status` and `botss task show $BOTSS_TASK`).",
+        );
+      this.svc.emit(
+        "run.interrupted",
+        `Run ${r.id} (${r.agent}) was interrupted by a restart`,
+        {},
+        { actor: r.agent, task: r.task, run: r.id },
+      );
     }
-    for (const a of this.svc.agents()) if (a.current_run) this.svc.updateAgent(a.id, { current_run: null, status: "idle" });
+    for (const a of this.svc.agents())
+      if (a.current_run) this.svc.updateAgent(a.id, { current_run: null, status: "idle" });
   }
 
   private prepareRetry(taskId: string, session: string, prompt: string): void {
@@ -116,18 +139,22 @@ export class Orchestrator {
 
   quota() {
     const st = this.svc.state;
-    return quotaCheck(this.svc.settings, { usedToday: this.svc.usedToday(), limitedUntil: st.limitedUntil ?? null });
+    return quotaCheck(this.svc.settings, {
+      usedToday: this.svc.usedToday(),
+      limitedUntil: st.limitedUntil ?? null,
+    });
   }
 
   async tick(): Promise<void> {
-    if (this.ticking) return;
+    if (this.ticking || this.stopped) return;
     this.ticking = true;
     try {
-      await this.sweepWorktrees();
+      void this.sweepWorktrees();
       const st = this.svc.state;
       if (st.limitedUntil && st.limitedUntil <= Date.now()) {
         this.svc.patchState({ limitedUntil: null });
-        if (this.svc.settings.auto_resume_after_limit) this.svc.emit("quota.resumed", "Usage limit reset; scheduler resumed", {});
+        if (this.svc.settings.auto_resume_after_limit)
+          this.svc.emit("quota.resumed", "Usage limit reset; scheduler resumed", {});
         else this.svc.patchState({ paused: true, pauseReason: "usage limit reset; resume manually" });
       }
       const settings = this.svc.settings;
@@ -136,27 +163,38 @@ export class Orchestrator {
       for (const r of this.active.values()) runningByRole[r.role] = (runningByRole[r.role] ?? 0) + 1;
       const runningTasks = new Set([...this.active.values()].map((r) => r.task).filter(Boolean) as string[]);
       const buildOpen = ["build", "release_review"].includes(this.svc.phase);
-      const snap: SchedTask[] = tasks
-        .filter((t) => t.status !== "done")
-        .map((t) => ({
-          id: t.id,
-          kind: t.kind,
-          role: t.meta.ruling ? "tech-lead" : t.role,
-          status: t.status,
-          after: t.after,
-          owns: t.owns,
-          running: runningTasks.has(t.id),
-          // Build tasks wait for plan approval; planning and answer tasks run in any phase.
-          hold: Boolean(t.hold) || ((t.kind === "build" || t.kind === "integrate") && !buildOpen) || this.merging.has(t.id),
-          priority: t.priority,
-        }));
+      // Done tasks stay in the snapshot: promotion checks that every dependency is done.
+      const snap: SchedTask[] = tasks.map((t) => ({
+        id: t.id,
+        kind: t.kind,
+        role: t.meta.ruling ? "tech-lead" : t.role,
+        status: t.status,
+        after: t.after,
+        owns: t.owns,
+        running: runningTasks.has(t.id) || this.finalizing.has(t.id),
+        // Build tasks wait for plan approval; planning and answer tasks run in any phase.
+        hold:
+          Boolean(t.hold) ||
+          ((t.kind === "build" || t.kind === "integrate") && !buildOpen) ||
+          this.merging.has(t.id),
+        priority: t.priority,
+      }));
       const roleCaps: Partial<Record<Role, number>> = {};
-      for (const role of Object.keys(this.p.roles.roles) as Role[]) roleCaps[role] = roleCap(this.p.roles, settings, role);
-      const actions = schedule({ tasks: snap, runningByRole, roleCaps, globalCap: settings.max_concurrent_agents, quotaOk: this.quota().ok, paused: st.paused });
+      for (const role of Object.keys(this.p.roles.roles) as Role[])
+        roleCaps[role] = roleCap(this.p.roles, settings, role);
+      const actions = schedule({
+        tasks: snap,
+        runningByRole,
+        roleCaps,
+        globalCap: settings.max_concurrent_agents,
+        quotaOk: this.quota().ok,
+        paused: st.paused,
+      });
       for (const a of actions) {
         if (a.type === "promote") {
           const t = this.svc.task(a.task);
-          if (t && t.status === "todo" && (buildOpen || t.kind !== "build")) this.svc.setStatus(a.task, "ready", { reason: "dependencies done" });
+          if (t && t.status === "todo" && (buildOpen || t.kind !== "build"))
+            this.svc.setStatus(a.task, "ready", { reason: "dependencies done" });
         } else {
           const t = this.svc.task(a.task);
           if (!t) continue;
@@ -197,7 +235,8 @@ export class Orchestrator {
   envFor(agent: string, extra: Record<string, string>): Record<string, string> {
     const a = this.svc.agent(agent)!;
     const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("BOTSS_")) env[k] = v;
+    for (const [k, v] of Object.entries(process.env))
+      if (v !== undefined && !k.startsWith("BOTSS_")) env[k] = v;
     // Agents get the botss CLI on PATH through per-project shims.
     const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
     env[pathKey] = `${this.p.paths.bin}${path.delimiter}${env[pathKey] ?? ""}`;
@@ -209,12 +248,19 @@ export class Orchestrator {
   // ------------------------------------------------------------------------------------------ runs
 
   /** Where a task's runs execute. Planning (and pre-build answers) use the integration worktree directly. */
-  private async workspaceFor(t: TaskRow, agent: string): Promise<{ cwd: string; branch: string; shared: boolean }> {
+  private async workspaceFor(
+    t: TaskRow,
+    agent: string,
+  ): Promise<{ cwd: string; branch: string; shared: boolean }> {
     const integ = this.p.paths.integration;
-    if (t.kind === "planning" || (t.kind === "answer" && !["build", "release_review"].includes(this.svc.phase))) {
+    if (
+      t.kind === "planning" ||
+      (t.kind === "answer" && !["build", "release_review"].includes(this.svc.phase))
+    ) {
       return { cwd: integ, branch: INTEGRATION_BRANCH, shared: true };
     }
-    if (t.worktree && fs.existsSync(path.join(t.worktree, ".git"))) return { cwd: t.worktree, branch: t.branch!, shared: false };
+    if (t.worktree && fs.existsSync(path.join(t.worktree, ".git")))
+      return { cwd: t.worktree, branch: t.branch!, shared: false };
     const branch = t.branch ?? taskBranch(t.id, t.title);
     const dir = t.worktree ?? path.join(this.p.paths.worktrees, `${agent}-${t.id}`);
     const base = await headSha(integ);
@@ -239,7 +285,8 @@ export class Orchestrator {
     const resume = (stage === "implement" || stage === "fix") && t.meta.resume ? t.meta.resume : null;
     const extra: string[] = [];
     if (t.meta.note && !resume) extra.push(t.meta.note);
-    if (t.kind === "integrate" && t.meta.mergeBranch) extra.push(`Branch to merge: \`${t.meta.mergeBranch}\``);
+    if (t.kind === "integrate" && t.meta.mergeBranch)
+      extra.push(`Branch to merge: \`${t.meta.mergeBranch}\``);
     let handoff: string | null = null;
     let stat: string | null = null;
     if (stage === "review" || stage === "verify") {
@@ -341,23 +388,47 @@ export class Orchestrator {
       ),
     );
     // Forward slashes work for both Git Bash (how Claude Code runs hooks on Windows) and POSIX shells.
-    const hookCmd = cliCommand().map((a) => quoteArg(a.replace(/\\/g, "/"))).join(" ") + " hook pre-tool-use";
+    const hookCmd =
+      cliCommand()
+        .map((a) => quoteArg(a.replace(/\\/g, "/")))
+        .join(" ") + " hook pre-tool-use";
     const settingsFile = path.join(dir, "settings.json");
     fs.writeFileSync(
       settingsFile,
       JSON.stringify(
         {
           hooks: {
-            PreToolUse: [{ matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep|Glob", hooks: [{ type: "command", command: hookCmd, timeout: 30 }] }],
+            PreToolUse: [
+              {
+                matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep|Glob",
+                hooks: [{ type: "command", command: hookCmd, timeout: 30 }],
+              },
+            ],
           },
         },
         null,
         2,
       ),
     );
-    const identity = { kind: "agent" as const, agent: o.agent, role: o.role, task: o.task.kind === "planning" ? null : o.task.id, runId };
+    const identity = {
+      kind: "agent" as const,
+      agent: o.agent,
+      role: o.role,
+      task: o.task.kind === "planning" ? null : o.task.id,
+      runId,
+    };
     const token = this.p.tokens.issue(this.p.id, identity);
-    this.svc.insertRun({ id: runId, agent: o.agent, role: o.role, task: o.task.id, stage: o.stage, session_id: sessionId, mode: o.resumeSession ? "resume" : "fresh", cwd: o.cwd, token_hash: hashToken(token) });
+    this.svc.insertRun({
+      id: runId,
+      agent: o.agent,
+      role: o.role,
+      task: o.task.id,
+      stage: o.stage,
+      session_id: sessionId,
+      mode: o.resumeSession ? "resume" : "fresh",
+      cwd: o.cwd,
+      token_hash: hashToken(token),
+    });
     this.svc.updateRun(runId, { mode: o.resumeSession ? "resume" : "fresh" });
     const env = this.envFor(o.agent, {
       BOTSS_AGENT: o.agent,
@@ -372,10 +443,31 @@ export class Orchestrator {
       BOTSS_RUN: runId,
       BOTSS_GUARD_FILE: guardFile,
     });
-    const run: ActiveRun = { runId, agent: o.agent, role: o.role, task: o.task.id, stage: o.stage, sessionId, usage: emptyUsage(), sawInit: false, cwd: o.cwd };
+    const run: ActiveRun = {
+      runId,
+      agent: o.agent,
+      role: o.role,
+      task: o.task.id,
+      stage: o.stage,
+      sessionId,
+      usage: emptyUsage(),
+      sawInit: false,
+      cwd: o.cwd,
+    };
     this.active.set(runId, run);
-    this.svc.updateAgent(o.agent, { current_task: o.task.id, current_run: runId, status: "working", last_action: "Starting", last_file: null });
-    if (o.task.kind !== "planning" && o.task.kind !== "answer" && !o.task.session_id && (o.stage === "implement" || o.stage === "fix")) {
+    this.svc.updateAgent(o.agent, {
+      current_task: o.task.id,
+      current_run: runId,
+      status: "working",
+      last_action: "Starting",
+      last_file: null,
+    });
+    if (
+      o.task.kind !== "planning" &&
+      o.task.kind !== "answer" &&
+      !o.task.session_id &&
+      (o.stage === "implement" || o.stage === "fix")
+    ) {
       this.svc.updateTask(o.task.id, { session_id: sessionId });
     }
     const maxTurns = settings.max_turns[o.role] ?? settings.default_max_turns;
@@ -421,7 +513,12 @@ export class Orchestrator {
         run.sawInit = true;
         this.svc.updateRun(run.runId, { session_id: ev.sessionId || run.sessionId });
         if (ev.sessionId) run.sessionId = ev.sessionId;
-        this.svc.emit("run.init", `${run.agent} session ${ev.sessionId.slice(0, 8)} (${ev.model ?? "default model"})`, { model: ev.model }, meta);
+        this.svc.emit(
+          "run.init",
+          `${run.agent} session ${ev.sessionId.slice(0, 8)} (${ev.model ?? "default model"})`,
+          { model: ev.model },
+          meta,
+        );
         break;
       case "tool":
         if (ev.file && path.isAbsolute(ev.file)) {
@@ -455,11 +552,32 @@ export class Orchestrator {
     }
   }
 
+  /** Tasks whose last run is being finalized: they count as running so the scheduler cannot start them twice. */
+  private finalizing = new Set<string>();
+
   private async onExit(run: ActiveRun, exit: RunExit): Promise<void> {
+    if (run.task) this.finalizing.add(run.task);
+    try {
+      await this.finalizeRun(run, exit);
+    } finally {
+      if (run.task) this.finalizing.delete(run.task);
+    }
+    void this.tick();
+  }
+
+  private async finalizeRun(run: ActiveRun, exit: RunExit): Promise<void> {
     this.active.delete(run.runId);
     this.p.tokens.revokeRun(run.runId);
     const r = run.result;
-    const status = exit.killed ? "killed" : exit.timedOut ? "timeout" : run.limited ? "limited" : r && !r.isError && exit.code === 0 ? "success" : "error";
+    const status = exit.killed
+      ? "killed"
+      : exit.timedOut
+        ? "timeout"
+        : run.limited
+          ? "limited"
+          : r && !r.isError && exit.code === 0
+            ? "success"
+            : "error";
     this.svc.updateRun(run.runId, {
       ended_at: new Date().toISOString(),
       exit_code: exit.code,
@@ -473,21 +591,45 @@ export class Orchestrator {
       result_text: (r?.text || exit.stderr.slice(-400)) ?? null,
     });
     const cur = this.svc.agent(run.agent);
-    if (cur?.current_run === run.runId) this.svc.updateAgent(run.agent, { current_run: null, current_task: null, status: "idle", last_action: `Finished (${status})` });
+    if (cur?.current_run === run.runId)
+      this.svc.updateAgent(run.agent, {
+        current_run: null,
+        current_task: null,
+        status: "idle",
+        last_action: `Finished (${status})`,
+      });
     const meta = { actor: run.agent, role: run.role, task: run.task, run: run.runId };
     this.svc.emit(
       "run.ended",
       `${run.agent} finished ${run.stage}${run.task ? ` on ${run.task}` : ""}: ${status}${r ? ` · ${r.turns} turns · ${budgetTokens(run.usage).toLocaleString()} tokens` : ""}`,
-      { status, exit: exit.code, turns: r?.turns ?? 0, tokens: budgetTokens(run.usage), cost: r?.costUsd ?? 0 },
+      {
+        status,
+        exit: exit.code,
+        turns: r?.turns ?? 0,
+        tokens: budgetTokens(run.usage),
+        cost: r?.costUsd ?? 0,
+      },
       meta,
     );
     if (status === "killed") return;
     if (status === "limited") {
       const until = run.limited?.resetsAt ?? Date.now() + 60 * 60_000;
       this.svc.patchState({ limitedUntil: until });
-      this.svc.emit("quota.limit", `Claude Code usage limit reached; Botss paused until ${new Date(until).toLocaleTimeString()}`, { resetsAt: until }, meta);
-      this.svc.alert(`Usage limit reached. Botss pauses until ${new Date(until).toLocaleString()}${this.svc.settings.auto_resume_after_limit ? " and then resumes automatically" : ""}.`);
-      if (run.task) this.prepareRetry(run.task, run.sessionId, "You were paused by a usage limit. Continue the task from where you left off.");
+      this.svc.emit(
+        "quota.limit",
+        `Claude Code usage limit reached; Botss paused until ${new Date(until).toLocaleTimeString()}`,
+        { resetsAt: until },
+        meta,
+      );
+      this.svc.alert(
+        `Usage limit reached. Botss pauses until ${new Date(until).toLocaleString()}${this.svc.settings.auto_resume_after_limit ? " and then resumes automatically" : ""}.`,
+      );
+      if (run.task)
+        this.prepareRetry(
+          run.task,
+          run.sessionId,
+          "You were paused by a usage limit. Continue the task from where you left off.",
+        );
       return;
     }
     if (!run.task) return;
@@ -501,17 +643,28 @@ export class Orchestrator {
     } catch (e) {
       this.svc.alert(`Post-run handling failed for ${t.id}: ${(e as Error).message}`, t.id);
     }
-    void this.tick();
   }
 
   private failRun(t: TaskRow, run: ActiveRun, why: string, resumePrompt: string | null): void {
     const fails = t.run_failures + 1;
     const max = this.svc.settings.max_verify_failures;
     this.svc.updateTask(t.id, { run_failures: fails });
-    this.svc.emit("task.run_failed", `${t.id}: ${why} (attempt ${fails} of ${max})`, { why, attempt: fails }, { actor: run.agent, task: t.id });
+    this.svc.emit(
+      "task.run_failed",
+      `${t.id}: ${why} (attempt ${fails} of ${max})`,
+      { why, attempt: fails },
+      { actor: run.agent, task: t.id },
+    );
     if (fails >= max) {
-      this.svc.setStatus(t.id, "blocked", { force: true, reason: `${fails} runs ended without finishing: ${why}`, extra: { blocked_on: "@human", blocked_reason: why } });
-      this.svc.alert(`${t.id} is blocked after ${fails} failed runs: ${why}. Check the agent log, then unblock or adjust the task.`, t.id);
+      this.svc.setStatus(t.id, "blocked", {
+        force: true,
+        reason: `${fails} runs ended without finishing: ${why}`,
+        extra: { blocked_on: "@human", blocked_reason: why },
+      });
+      this.svc.alert(
+        `${t.id} is blocked after ${fails} failed runs: ${why}. Check the agent log, then unblock or adjust the task.`,
+        t.id,
+      );
     } else if (resumePrompt && run.sawInit) {
       this.svc.patchMeta(t.id, { resume: { session: run.sessionId, prompt: resumePrompt } });
     }
@@ -530,15 +683,21 @@ export class Orchestrator {
         "Your previous run ended before the task was finished: `botss task done` was not called, or it was refused. Check `botss task show $BOTSS_TASK` and `git status`, finish the work, and hand off with `botss task done`.",
       );
     } else if (run.stage === "review") {
-      if (t.status === "review" && !this.merging.has(t.id)) this.failRun(t, run, "review ended without a verdict", null);
+      if (t.status === "review" && !this.merging.has(t.id))
+        this.failRun(t, run, "review ended without a verdict", null);
     } else if (run.stage === "verify") {
-      if (t.status === "qa" && !this.merging.has(t.id)) this.failRun(t, run, "QA ended without pass or fail", null);
+      if (t.status === "qa" && !this.merging.has(t.id))
+        this.failRun(t, run, "QA ended without pass or fail", null);
     }
   }
 
   // ------------------------------------------------------------------------------------- planning
 
-  createPlanningTask(role: Role, mode: RunMode, opts: { body?: string; resume?: { session: string; prompt: string } | null; note?: string } = {}): TaskRow {
+  createPlanningTask(
+    role: Role,
+    mode: RunMode,
+    opts: { body?: string; resume?: { session: string; prompt: string } | null; note?: string } = {},
+  ): TaskRow {
     const id = this.svc.nextId("P");
     return this.svc.createTask({
       id,
@@ -603,13 +762,23 @@ export class Orchestrator {
       plan: "submit a valid plan with `botss plan submit .botss/tasks/`",
       screens: "submit the design with `botss doc submit design`",
     };
-    this.failRun(t, run, ok ? `run ended without the expected output (${expected[t.mode ?? ""] ?? "?"})` : "run failed", `Your run ended before you finished. You still need to ${expected[t.mode ?? ""] ?? "finish your mode"}.`);
+    this.failRun(
+      t,
+      run,
+      ok ? `run ended without the expected output (${expected[t.mode ?? ""] ?? "?"})` : "run failed",
+      `Your run ended before you finished. You still need to ${expected[t.mode ?? ""] ?? "finish your mode"}.`,
+    );
   }
 
   private async onPlanningDone(t: TaskRow, session: string): Promise<void> {
     switch (t.mode) {
       case "system":
-        this.createPlanningTask("designer", "screens", { resume: { session, prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }) } });
+        this.createPlanningTask("designer", "screens", {
+          resume: {
+            session,
+            prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }),
+          },
+        });
         break;
       case "screens":
         this.svc.setPhase("architecture_review");
@@ -622,14 +791,24 @@ export class Orchestrator {
 
   // ------------------------------------------------------------------------------------ idea + gates
 
-  async submitIdea(input: { text: string; stakes?: string; links?: string[]; attachments?: { name: string; data: string }[] }): Promise<void> {
-    if (!["idea", "discovery"].includes(this.svc.phase)) throw new Error(`the idea can only be submitted in the idea phase (now ${this.svc.phase})`);
+  async submitIdea(input: {
+    text: string;
+    stakes?: string;
+    links?: string[];
+    attachments?: { name: string; data: string }[];
+  }): Promise<void> {
+    if (!["idea", "discovery"].includes(this.svc.phase))
+      throw new Error(`the idea can only be submitted in the idea phase (now ${this.svc.phase})`);
     const integ = this.p.paths.integration;
     const docs = path.join(integ, ".botss/docs");
     fs.mkdirSync(path.join(docs, "attachments"), { recursive: true });
     const names: string[] = [];
     for (const a of input.attachments ?? []) {
-      const safe = path.basename(a.name).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100) || "attachment";
+      const safe =
+        path
+          .basename(a.name)
+          .replace(/[^A-Za-z0-9._-]/g, "_")
+          .slice(0, 100) || "attachment";
       fs.writeFileSync(path.join(docs, "attachments", safe), Buffer.from(a.data, "base64"));
       names.push(safe);
     }
@@ -640,13 +819,22 @@ export class Orchestrator {
       "",
       input.stakes ? `**Stakes:** ${input.stakes}\n` : "",
       input.links?.length ? `## Links\n\n${input.links.map((l) => `- ${l}`).join("\n")}\n` : "",
-      names.length ? `## Attachments\n\n${names.map((n) => `- .botss/docs/attachments/${n}`).join("\n")}\n` : "",
+      names.length
+        ? `## Attachments\n\n${names.map((n) => `- .botss/docs/attachments/${n}`).join("\n")}\n`
+        : "",
     ].join("\n");
     fs.writeFileSync(path.join(docs, "idea.md"), md);
     await commitAll(integ, "botss: owner idea", ["-A", "--", ".botss/docs"]);
-    this.svc.patchState({ idea: { text: input.text, stakes: input.stakes, links: input.links ?? [], attachments: names } });
+    this.svc.patchState({
+      idea: { text: input.text, stakes: input.stakes, links: input.links ?? [], attachments: names },
+    });
     this.svc.submitDoc("idea", ".botss/docs/idea.md", md, "human", null, "approved");
-    this.svc.emit("idea.submitted", "Owner submitted the idea", { attachments: names.length }, { actor: "human" });
+    this.svc.emit(
+      "idea.submitted",
+      "Owner submitted the idea",
+      { attachments: names.length },
+      { actor: "human" },
+    );
     this.svc.setPhase("discovery");
     this.createPlanningTask("pm", "discover");
     void this.tick();
@@ -663,13 +851,19 @@ export class Orchestrator {
       this.svc.setPhase("prd_review");
       if (!this.gateEnabled("prd")) await this.approve("prd", "auto-approved (gate off)", "auto");
     } else if (name === "architecture" && phase === "architecture_review") {
-      if (!this.gateEnabled("architecture")) await this.approve("architecture", "auto-approved (gate off)", "auto");
+      if (!this.gateEnabled("architecture"))
+        await this.approve("architecture", "auto-approved (gate off)", "auto");
     } else if (name === "plan" && phase === "plan_review") {
       if (!this.gateEnabled("plan")) await this.approve("plan", "auto-approved (gate off)", "auto");
     }
   }
 
-  async approve(gate: Gate, comment: string | null, actor = "human", team?: Record<string, number>): Promise<void> {
+  async approve(
+    gate: Gate,
+    comment: string | null,
+    actor = "human",
+    team?: Record<string, number>,
+  ): Promise<void> {
     const phase = this.svc.phase;
     const expect = Object.entries(PHASE_GATE).find(([, g]) => g === gate)?.[0];
     if (expect !== phase) throw new Error(`gate ${gate} is not open (phase is ${phase})`);
@@ -694,7 +888,12 @@ export class Orchestrator {
         break;
       case "release":
         this.svc.setPhase("done");
-        this.svc.emit("project.done", "Release approved. Merge botss/integration into your main branch when you are ready.", {}, { actor });
+        this.svc.emit(
+          "project.done",
+          "Release approved. Merge botss/integration into your main branch when you are ready.",
+          {},
+          { actor },
+        );
         break;
       case "design_direction":
         break;
@@ -710,17 +909,25 @@ export class Orchestrator {
     const d = doc ? this.svc.doc(doc) : null;
     if (doc && d) this.svc.setDocStatus(doc, "changes_requested", comment, actor);
     this.svc.recordApproval(gate, doc, d?.version ?? null, "changes_requested", comment);
-    const comments = d ? (d.versions.at(-1)?.comments ?? []).map((c: any) => `- ${c.anchor ? `(${c.anchor}) ` : ""}${c.body}`).join("\n") : `- ${comment}`;
+    const comments = d
+      ? (d.versions.at(-1)?.comments ?? [])
+          .map((c: any) => `- ${c.anchor ? `(${c.anchor}) ` : ""}${c.body}`)
+          .join("\n")
+      : `- ${comment}`;
     const note = `## Owner's comments\n\n${comments || `- ${comment}`}`;
     switch (gate) {
       case "prd":
         this.createPlanningTask("pm", "revise", { note });
         break;
       case "architecture":
-        this.createPlanningTask("tech-lead", "architect", { note: `The owner requested changes to the architecture.\n\n${note}` });
+        this.createPlanningTask("tech-lead", "architect", {
+          note: `The owner requested changes to the architecture.\n\n${note}`,
+        });
         break;
       case "plan":
-        this.createPlanningTask("tech-lead", "plan", { note: `The owner requested changes to the plan.\n\n${note}` });
+        this.createPlanningTask("tech-lead", "plan", {
+          note: `The owner requested changes to the plan.\n\n${note}`,
+        });
         break;
       case "release": {
         this.svc.setPhase("build");
@@ -756,19 +963,35 @@ export class Orchestrator {
     if (t?.kind === "planning") {
       if (t.mode === "discover") {
         this.createPlanningTask("pm", "draft", {
-          resume: { session: q.session_id ?? t.session_id ?? crypto.randomUUID(), prompt: `The owner answered your discovery questions (${q.id}):\n\n${answerText}\n\nNow switch to mode draft: write \`.botss/docs/prd.md\` and \`botss doc submit prd\`.` },
+          resume: {
+            session: q.session_id ?? t.session_id ?? crypto.randomUUID(),
+            prompt: `The owner answered your discovery questions (${q.id}):\n\n${answerText}\n\nNow switch to mode draft: write \`.botss/docs/prd.md\` and \`botss doc submit prd\`.`,
+          },
         });
       } else if (t.mode === "direction") {
         this.svc.patchState({ designChoice: answerText });
         this.svc.recordApproval("design_direction", null, null, "approved", answerText.slice(0, 500));
-        this.svc.emit("design.direction", "Owner picked a design direction", { choice: answerText.slice(0, 500) }, { actor: q.answered_by });
+        this.svc.emit(
+          "design.direction",
+          "Owner picked a design direction",
+          { choice: answerText.slice(0, 500) },
+          { actor: q.answered_by },
+        );
         this.svc.setPhase("design");
         this.createPlanningTask("designer", "system", {
-          resume: { session: q.session_id ?? t.session_id ?? crypto.randomUUID(), prompt: `The owner picked a direction (${q.id}):\n\n${answerText}\n\nNow switch to mode system: build the tokens, theme, and DESIGN.md for this direction, and commit.` },
+          resume: {
+            session: q.session_id ?? t.session_id ?? crypto.randomUUID(),
+            prompt: `The owner picked a direction (${q.id}):\n\n${answerText}\n\nNow switch to mode system: build the tokens, theme, and DESIGN.md for this direction, and commit.`,
+          },
         });
       } else if (q.session_id) {
         // A planning agent asked something mid-run: rerun its mode on the same session with the answer.
-        this.createPlanningTask(t.role, t.mode as RunMode, { resume: { session: q.session_id, prompt: `Answer to your question ${q.message_id}:\n\n${answerText}\n\nContinue in mode ${t.mode}.` } });
+        this.createPlanningTask(t.role, t.mode as RunMode, {
+          resume: {
+            session: q.session_id,
+            prompt: `Answer to your question ${q.message_id}:\n\n${answerText}\n\nContinue in mode ${t.mode}.`,
+          },
+        });
       }
     } else if (t && t.status === "blocked") {
       const back = t.meta.resumeStatus ?? "in_progress";
@@ -779,7 +1002,10 @@ export class Orchestrator {
       });
       if (q.session_id) {
         this.svc.patchMeta(t.id, {
-          resume: { session: q.session_id, prompt: `Your question ${q.message_id} was answered by ${q.answered_by}:\n\n${answerText}\n\nContinue the task.` },
+          resume: {
+            session: q.session_id,
+            prompt: `Your question ${q.message_id} was answered by ${q.answered_by}:\n\n${answerText}\n\nContinue the task.`,
+          },
           resumeStatus: undefined,
         });
       }
@@ -788,7 +1014,14 @@ export class Orchestrator {
   }
 
   /** Route a question to a teammate role: an answer task for that role. */
-  routeQuestion(q: { id: string; messageId: string; to: string; body: string; from: string; task: string | null }): void {
+  routeQuestion(q: {
+    id: string;
+    messageId: string;
+    to: string;
+    body: string;
+    from: string;
+    task: string | null;
+  }): void {
     const target = q.to.replace(/^@/, "");
     const role = (this.p.roles.roles[target] ? target : target.replace(/-\d+$/, "")) as Role;
     if (!this.p.roles.roles[role]) return;
@@ -822,7 +1055,12 @@ export class Orchestrator {
         return;
       }
     }
-    this.failRun(t, run, ok ? "run ended without `botss reply`" : "run failed", `You have not replied yet. Reply with \`botss reply ${t.meta.answers} "..."\`.`);
+    this.failRun(
+      t,
+      run,
+      ok ? "run ended without `botss reply`" : "run failed",
+      `You have not replied yet. Reply with \`botss reply ${t.meta.answers} "..."\`.`,
+    );
   }
 
   // ------------------------------------------------------------------------------------- merging
@@ -831,7 +1069,18 @@ export class Orchestrator {
   /** Worktrees of merged tasks, removed once no run is using them (a QA run may still be finishing in it). */
   private cleanup = new Set<string>();
 
+  private sweeping = false;
   private async sweepWorktrees(): Promise<void> {
+    if (this.sweeping || !this.cleanup.size) return;
+    this.sweeping = true;
+    try {
+      await this.sweepOnce();
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private async sweepOnce(): Promise<void> {
     const busy = new Set([...this.active.values()].map((r) => path.resolve(r.cwd)));
     for (const dir of [...this.cleanup]) {
       if (busy.has(path.resolve(dir))) continue;
@@ -858,35 +1107,72 @@ export class Orchestrator {
       return;
     }
     const pre = await headSha(integ);
-    const r = await git(integ, ["merge", "--no-ff", "-m", `botss: merge ${t.id} ${t.title}`, branch], { reject: false });
+    const r = await git(integ, ["merge", "--no-ff", "-m", `botss: merge ${t.id} ${t.title}`, branch], {
+      reject: false,
+    });
     if (r.code !== 0) {
-      const conflicted = (await git(integ, ["diff", "--name-only", "--diff-filter=U"], { reject: false })).stdout.split("\n").filter(Boolean);
+      const conflicted = (
+        await git(integ, ["diff", "--name-only", "--diff-filter=U"], { reject: false })
+      ).stdout
+        .split("\n")
+        .filter(Boolean);
       await git(integ, ["merge", "--abort"], { reject: false });
       await git(integ, ["reset", "--hard", pre], { reject: false });
-      this.svc.emit("merge.conflict", `Merge of ${t.id} conflicts in ${conflicted.length} file(s): ${conflicted.slice(0, 5).join(", ")}`, { files: conflicted }, { task: t.id });
-      this.createIntegrateTask(t, conflicted.length ? conflicted : await diffNames(integ, pre, branch), "merge conflict", r.stderr || r.stdout);
+      this.svc.emit(
+        "merge.conflict",
+        `Merge of ${t.id} conflicts in ${conflicted.length} file(s): ${conflicted.slice(0, 5).join(", ")}`,
+        { files: conflicted },
+        { task: t.id },
+      );
+      this.createIntegrateTask(
+        t,
+        conflicted.length ? conflicted : await diffNames(integ, pre, branch),
+        "merge conflict",
+        r.stderr || r.stdout,
+      );
       return;
     }
     const checks = this.svc.settings.checks;
     for (const cmd of checks) {
-      const res = await runShell(cmd, { cwd: integ, env: this.envFor(await this.integrationAgent(), {}), timeoutMs: this.svc.settings.verify_timeout_minutes * 60_000 });
+      const res = await runShell(cmd, {
+        cwd: integ,
+        env: this.envFor(await this.integrationAgent(), {}),
+        timeoutMs: this.svc.settings.verify_timeout_minutes * 60_000,
+      });
       if (res.code !== 0) {
         await git(integ, ["reset", "--hard", pre], { reject: false });
-        this.svc.emit("checks.failed", `Checks failed after merging ${t.id}: \`${cmd}\``, { command: cmd, output: res.output.slice(-4000) }, { task: t.id });
+        this.svc.emit(
+          "checks.failed",
+          `Checks failed after merging ${t.id}: \`${cmd}\``,
+          { command: cmd, output: res.output.slice(-4000) },
+          { task: t.id },
+        );
         this.createIntegrateTask(t, await diffNames(integ, pre, branch), `checks failed: ${cmd}`, res.output);
         return;
       }
     }
     const head = await headSha(integ);
-    this.svc.setStatus(t.id, "done", { force: true, reason: "merged", extra: { head_sha: head, hold: null } });
-    this.svc.emit("merge.ok", `Merged ${t.id} into botss/integration (${head.slice(0, 7)})`, { head, checks: checks.length }, { task: t.id });
+    this.svc.setStatus(t.id, "done", {
+      force: true,
+      reason: "merged",
+      extra: { head_sha: head, hold: null },
+    });
+    this.svc.emit(
+      "merge.ok",
+      `Merged ${t.id} into botss/integration (${head.slice(0, 7)})`,
+      { head, checks: checks.length },
+      { task: t.id },
+    );
     await this.afterMerged(t);
   }
 
   private async integrationAgent(): Promise<string> {
     const id = "integration";
     if (!this.svc.agent(id)) {
-      const block = await allocatePortBlock(this.svc.settings.port_base, this.svc.agents().map((a) => a.port_block as number));
+      const block = await allocatePortBlock(
+        this.svc.settings.port_base,
+        this.svc.agents().map((a) => a.port_block as number),
+      );
       this.svc.upsertAgent(id, "devops", block);
     }
     return id;
@@ -926,8 +1212,15 @@ export class Orchestrator {
       ].join("\n"),
       meta: { mergeBranch: t.branch ?? undefined },
     });
-    this.svc.setStatus(parent, "blocked", { force: true, reason: `waiting for integration task ${id}`, extra: { hold: "integrating", blocked_on: id, blocked_reason: why } });
-    this.svc.alert(`${t.id} could not be merged (${why}). Integration task ${id} was created for the tech lead.`, t.id);
+    this.svc.setStatus(parent, "blocked", {
+      force: true,
+      reason: `waiting for integration task ${id}`,
+      extra: { hold: "integrating", blocked_on: id, blocked_reason: why },
+    });
+    this.svc.alert(
+      `${t.id} could not be merged (${why}). Integration task ${id} was created for the tech lead.`,
+      t.id,
+    );
   }
 
   private async afterMerged(t: TaskRow): Promise<void> {
@@ -935,7 +1228,11 @@ export class Orchestrator {
     if (t.kind === "integrate" && t.parent) {
       const parent = this.svc.task(t.parent);
       if (parent && parent.status !== "done") {
-        this.svc.setStatus(parent.id, "done", { force: true, reason: `merged through ${t.id}`, extra: { hold: null, blocked_on: null, blocked_reason: null } });
+        this.svc.setStatus(parent.id, "done", {
+          force: true,
+          reason: `merged through ${t.id}`,
+          extra: { hold: null, blocked_on: null, blocked_reason: null },
+        });
         if (parent.worktree) this.cleanup.add(parent.worktree);
       }
     }
@@ -954,7 +1251,11 @@ export class Orchestrator {
     const found: string[] = [];
     if (m) {
       for (const raw of m[1]!.split("\n")) {
-        const line = raw.trim().replace(/^[-*]\s+/, "").replace(/^`+|`+$/g, "").trim();
+        const line = raw
+          .trim()
+          .replace(/^[-*]\s+/, "")
+          .replace(/^`+|`+$/g, "")
+          .trim();
         if (!line || line.startsWith("```") || line.startsWith("#")) continue;
         found.push(line);
       }
@@ -964,7 +1265,9 @@ export class Orchestrator {
     const next = [...cur, ...found.filter((c) => !cur.includes(c))];
     if (next.length !== cur.length) {
       this.svc.updateSettings({ checks: next }, "orchestrator");
-      this.svc.emit("project.checks", `Integration checks set from ${t.id}: ${found.join(" ; ")}`, { checks: next });
+      this.svc.emit("project.checks", `Integration checks set from ${t.id}: ${found.join(" ; ")}`, {
+        checks: next,
+      });
     }
   }
 
@@ -1062,7 +1365,8 @@ export class Orchestrator {
 
   resume(): void {
     this.svc.patchState({ paused: false, pauseReason: null, limitedUntil: null });
-    for (const t of this.svc.tasks()) if (t.hold === "killed" || t.hold === "error") this.svc.updateTask(t.id, { hold: null });
+    for (const t of this.svc.tasks())
+      if (t.hold === "killed" || t.hold === "error") this.svc.updateTask(t.id, { hold: null });
     this.svc.emit("project.resumed", "Scheduler resumed", {}, { actor: "human" });
     void this.tick();
   }
@@ -1072,11 +1376,21 @@ export class Orchestrator {
     this.svc.patchState({ paused: true, pauseReason: "kill switch" });
     const runs = [...this.active.values()];
     for (const r of runs) {
-      if (r.task) this.prepareRetry(r.task, r.sessionId, "You were stopped by the owner's kill switch. When resumed, check `git status` and `botss task show $BOTSS_TASK`, then continue.");
+      if (r.task)
+        this.prepareRetry(
+          r.task,
+          r.sessionId,
+          "You were stopped by the owner's kill switch. When resumed, check `git status` and `botss task show $BOTSS_TASK`, then continue.",
+        );
     }
     await this.p.runner.killAll();
     await this.idle();
-    this.svc.emit("project.killed", `Kill switch: stopped ${runs.length} agent run(s)`, { runs: runs.map((r) => r.runId) }, { actor: "human" });
+    this.svc.emit(
+      "project.killed",
+      `Kill switch: stopped ${runs.length} agent run(s)`,
+      { runs: runs.map((r) => r.runId) },
+      { actor: "human" },
+    );
     return runs.length;
   }
 
@@ -1084,7 +1398,11 @@ export class Orchestrator {
     const r = [...this.active.values()].find((x) => x.agent === agent);
     if (!r) return;
     if (r.task) {
-      this.prepareRetry(r.task, r.sessionId, "You were paused by the owner. Continue the task from where you left off.");
+      this.prepareRetry(
+        r.task,
+        r.sessionId,
+        "You were paused by the owner. Continue the task from where you left off.",
+      );
       this.svc.updateTask(r.task, { hold: "paused" });
     }
     await this.p.runner.kill(r.runId);
@@ -1103,14 +1421,30 @@ export class Orchestrator {
 
   // ------------------------------------------------------------------------------------- preview
 
-  async preview(action: "start" | "stop" | "reset"): Promise<{ ok: boolean; output: string; url: string | null }> {
+  async preview(
+    action: "start" | "stop" | "reset",
+  ): Promise<{ ok: boolean; output: string; url: string | null }> {
     const agent = await this.integrationAgent();
     const env = this.envFor(agent, {});
-    const cmd = action === "start" ? "docker compose up -d --build" : action === "stop" ? "docker compose down" : "docker compose down -v && docker compose up -d --build";
+    const cmd =
+      action === "start"
+        ? "docker compose up -d --build"
+        : action === "stop"
+          ? "docker compose down"
+          : "docker compose down -v && docker compose up -d --build";
     const r = await runShell(cmd, { cwd: this.p.paths.integration, env, timeoutMs: 15 * 60_000 });
     this.svc.patchState({ previewRunning: action !== "stop" && r.code === 0 });
-    this.svc.emit("preview.changed", `Preview ${action}: ${r.code === 0 ? "ok" : "failed"}`, { action, code: r.code }, { actor: "human" });
-    return { ok: r.code === 0, output: r.output.slice(-6000), url: r.code === 0 && action !== "stop" ? `http://127.0.0.1:${env.FRONTEND_PORT}` : null };
+    this.svc.emit(
+      "preview.changed",
+      `Preview ${action}: ${r.code === 0 ? "ok" : "failed"}`,
+      { action, code: r.code },
+      { actor: "human" },
+    );
+    return {
+      ok: r.code === 0,
+      output: r.output.slice(-6000),
+      url: r.code === 0 && action !== "stop" ? `http://127.0.0.1:${env.FRONTEND_PORT}` : null,
+    };
   }
 
   previewUrl(): string | null {

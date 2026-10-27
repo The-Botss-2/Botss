@@ -6,6 +6,8 @@ export const INTEGRATION_BRANCH = "botss/integration";
 
 const GIT_ENV = {
   GIT_TERMINAL_PROMPT: "0",
+  // Git for Windows asks "Deletion of directory failed. Should I try again? (y/n)" on locked files; never wait.
+  GIT_ASK_YESNO: "false",
   GIT_AUTHOR_NAME: "Botss",
   GIT_AUTHOR_EMAIL: "botss@localhost",
   GIT_COMMITTER_NAME: "Botss",
@@ -13,7 +15,7 @@ const GIT_ENV = {
 };
 
 export async function git(cwd: string, args: string[], opts: { reject?: boolean; env?: Record<string, string> } = {}) {
-  const r = await execa("git", args, { cwd, reject: false, env: { ...GIT_ENV, ...opts.env }, stripFinalNewline: true });
+  const r = await execa("git", args, { cwd, reject: false, env: { ...GIT_ENV, ...opts.env }, stripFinalNewline: true, stdin: "ignore", timeout: 120_000 });
   if (opts.reject !== false && r.exitCode !== 0) {
     throw new Error(`git ${args.join(" ")} failed (${r.exitCode}): ${r.stderr || r.stdout}`);
   }
@@ -70,7 +72,7 @@ export async function ensureWorktree(repo: string, dir: string, branch: string, 
 export async function removeWorktree(repo: string, dir: string): Promise<void> {
   if (!fs.existsSync(dir)) return;
   await git(repo, ["worktree", "remove", "--force", dir], { reject: false });
-  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await git(repo, ["worktree", "prune"], { reject: false });
 }
 

@@ -124,4 +124,4 @@ botss bug create --task T012 --severity major --title "..." --file .botss/review
 
 ## Exit codes
 
-`0` success, `2` invalid arguments, `3` not allowed for your role or task, `4` server unreachable. If the server is unreachable, wait a few seconds and retry once; if it still fails, finish your local work, commit, and leave the handoff note at `.botss/handoffs/<task>.md`; the orchestrator collects it when the server is back.
+`0` success, `1` refused on its merits (for example `task done` with uncommitted owned files or a failing `verify`, or a plan with problems; read the output and fix your work), `2` invalid arguments, `3` not allowed for your role or task, `4` server unreachable. If the server is unreachable, wait a few seconds and retry once; if it still fails, finish your local work, commit, and leave the handoff note at `.botss/handoffs/<task>.md`; the orchestrator collects it when the server is back.

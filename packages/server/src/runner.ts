@@ -1,5 +1,5 @@
 import { parseStreamLine, type StreamEvent } from "@botss/core";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -89,20 +89,28 @@ function winQuote(a: string): string {
   return `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
 }
 
-export function killTree(pid: number): void {
-  try {
-    if (process.platform === "win32") {
-      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-    } else {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        process.kill(pid, "SIGKILL");
-      }
-    }
-  } catch {
-    /* already gone */
+/** Kill a process and its descendants. Resolves when the kill command finished (immediately on POSIX). */
+export function killTree(pid: number): Promise<void> {
+  if (process.platform === "win32") {
+    // taskkill walks the tree from the parent, so it must run before the parent is gone. Async, so several
+    // agents are killed in parallel.
+    return new Promise((resolve) => {
+      const k = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      k.on("exit", () => resolve());
+      k.on("error", () => resolve());
+    });
   }
+  try {
+    // Agents are started detached, so the process group holds the whole tree.
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+  return Promise.resolve();
 }
 
 export class ClaudeRunner implements AgentRunner {
@@ -140,7 +148,7 @@ export class ClaudeRunner implements AgentRunner {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child.pid) killTree(child.pid);
+      if (child.pid) void killTree(child.pid);
     }, spec.timeoutMs);
 
     const rl = readline.createInterface({ input: child.stdout! });
@@ -201,7 +209,7 @@ export class ClaudeRunner implements AgentRunner {
     const p = this.procs.get(runId);
     if (!p) return;
     p.killed = true;
-    if (p.child.pid) killTree(p.child.pid);
+    if (p.child.pid) await killTree(p.child.pid);
     await Promise.race([p.done, new Promise((r) => setTimeout(r, 1500))]);
   }
 

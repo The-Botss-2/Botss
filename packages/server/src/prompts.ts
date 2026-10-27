@@ -8,7 +8,7 @@ import type { TaskRow } from "./service.ts";
 // (user message) stays lean: the task file, unread messages, and pointers to files by path.
 
 export function stripFrontmatter(md: string): string {
-  return md.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+  return md.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
 }
 
 export function readSkill(skillsDir: string, name: string): string | null {

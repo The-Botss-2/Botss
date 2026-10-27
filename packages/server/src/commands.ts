@@ -14,7 +14,7 @@ import {
 } from "@botss/core";
 import fs from "node:fs";
 import path from "node:path";
-import { headSha, lsFiles, statusPorcelain } from "./git.ts";
+import { diffNames, headSha, lsFiles, statusPorcelain } from "./git.ts";
 import type { Project } from "./project.ts";
 import { ServiceError, type TaskRow } from "./service.ts";
 import { runShell } from "./shell.ts";
@@ -177,6 +177,19 @@ export class Commands {
     const dirty = (await statusPorcelain(cwd)).filter((f) => !f.file.startsWith(".botss/handoffs/") && !f.file.startsWith(".botss/reviews/") && !f.file.startsWith(".botss/screens/") && matchesAny(owned, f.file));
     if (dirty.length) {
       return { exit: 1, text: `Refused: commit your owned work first. Uncommitted:\n${dirty.map((d) => `  ${d.code} ${d.file}`).join("\n")}` };
+    }
+    // Backstop for edits the hook cannot see (for example a shell redirect): the branch diff must stay inside
+    // the task's paths. Integrate tasks merge whole task branches, so they are exempt.
+    if (t.base_sha && t.kind !== "integrate") {
+      const role = (id.kind === "agent" ? id.role : t.role) as Role;
+      const allowed = this.p.orch.writableFor(t, role, "implement");
+      const outside = (await diffNames(cwd, t.base_sha)).filter((f) => !matchesAny(allowed, f));
+      if (outside.length) {
+        return {
+          exit: 1,
+          text: `Refused: your branch changes files outside this task's paths:\n${outside.map((f) => `  ${f}`).join("\n")}\nRevert them (git checkout ${t.base_sha.slice(0, 7)} -- <file>) or ask the tech lead to change the task's owns.`,
+        };
+      }
     }
     // 2. Ingest the handoff.
     const head = await headSha(cwd);

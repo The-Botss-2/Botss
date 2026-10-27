@@ -2,7 +2,7 @@ import YAML from "yaml";
 import { globsOverlap } from "./globs.ts";
 import { isRole, type PlanProblem, type Role, type TaskSpec } from "./types.ts";
 
-const FRONTMATTER = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+const FRONTMATTER = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
 export function splitFrontmatter(text: string): { data: Record<string, unknown>; body: string } | null {
   const m = FRONTMATTER.exec(text);

@@ -158,6 +158,16 @@ export function events(h: Harness, type: string) {
 
 export async function cleanup(h: Harness | undefined): Promise<void> {
   if (!h) return;
+  // Debug aid: BOTSS_TEST_DUMP=<file> writes the event log and runs of the last test.
+  if (process.env.BOTSS_TEST_DUMP) {
+    try {
+      const lines = h.project.svc.events({ limit: 5000 }).map((e) => `${e.ts.slice(11, 23)} ${e.type} | ${e.actor ?? ""} | ${e.task ?? ""} | ${e.summary}`);
+      for (const r of h.project.svc.runs({ limit: 100 })) lines.push(`RUN ${r.id} ${r.agent} ${r.task} ${r.stage} ${r.result_status} ${r.result_text ?? ""}`);
+      fs.writeFileSync(process.env.BOTSS_TEST_DUMP, lines.join("\n"));
+    } catch {
+      /* ignore */
+    }
+  }
   try {
     await h.stop();
   } catch {

@@ -414,7 +414,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       const active = new Map(p.orch.activeRuns().map((r) => [r.agent, r]));
       return p.svc.agents().map((a) => {
         const r = a.current_run ? p.svc.run(a.current_run) : null;
-        const tokens = r ? null : null;
+        const tokens = r ? Number(r.input_tokens) + Number(r.output_tokens) + Number(r.cache_creation_tokens) : 0;
         return { ...a, active: active.has(a.id), run: r, tokens };
       });
     }),
@@ -517,7 +517,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       const screensDir = path.join(base, "design/screens");
       const screens = fs.existsSync(screensDir) ? fs.readdirSync(screensDir).filter((f) => /\.(html|md)$/.test(f)).sort() : [];
       const tokensFile = path.join(base, "contracts/design-tokens.json");
-      let tokens: unknown = null;
+      let tokens: unknown;
       try {
         tokens = fs.existsSync(tokensFile) ? JSON.parse(fs.readFileSync(tokensFile, "utf8")) : null;
       } catch {

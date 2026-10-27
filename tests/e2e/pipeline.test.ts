@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,6 +24,8 @@ afterEach(async () => {
   h = undefined;
 });
 
+// Git may convert line endings on checkout (core.autocrlf); compare normalized text.
+const read = (hh: Harness, rel: string) => fs.readFileSync(path.join(hh.project.paths.integration, rel), "utf8").replace(/\r\n/g, "\n");
 const done = (id: string) => () => h!.project.svc.task(id)?.status === "done";
 
 describe("pipeline (fake claude)", () => {
@@ -40,7 +43,7 @@ describe("pipeline (fake claude)", () => {
         },
         { steps: reviewApprove },
       ],
-      "backend:implement:resume": { steps: [{ expectPrompt: "Say fixed, not work" }, ...implementSteps("src/T001.txt", "fixed T001\n")] },
+      "backend:fix:resume": { steps: [{ expectPrompt: "Say fixed, not work" }, ...implementSteps("src/T001.txt", "fixed T001\n")] },
     });
     await seedBuild(h, { "T001.md": taskFile("T001", { role: "backend" }) });
     await waitFor(done("T001"), "T001 done");
@@ -53,7 +56,7 @@ describe("pipeline (fake claude)", () => {
     const be = h.invocations().filter((i) => i.role === "backend");
     expect(be).toHaveLength(2);
     expect(be[1].resume).toBe(be[0].sessionId);
-    expect(fs.readFileSync(path.join(h.project.paths.integration, "src/T001.txt"), "utf8")).toBe("fixed T001\n");
+    expect(read(h, "src/T001.txt")).toBe("fixed T001\n");
     const statuses = events(h, "task.status").filter((e) => e.task === "T001").map((e) => e.data.to);
     expect(statuses).toEqual(["ready", "in_progress", "review", "changes_requested", "in_progress", "review", "qa", "done"]);
   });
@@ -72,7 +75,7 @@ describe("pipeline (fake claude)", () => {
         },
         { steps: qaPass },
       ],
-      "backend:implement:resume": { steps: [{ expectPrompt: "Wrong text" }, ...implementSteps("src/T001.txt", "fixed T001\n")] },
+      "backend:fix:resume": { steps: [{ expectPrompt: "Wrong text" }, ...implementSteps("src/T001.txt", "fixed T001\n")] },
     });
     await seedBuild(h, { "T001.md": taskFile("T001", { role: "backend" }) });
     await waitFor(done("T001"), "T001 done");
@@ -83,7 +86,7 @@ describe("pipeline (fake claude)", () => {
     expect(svc.qaReports("T001").map((r) => r.verdict)).toEqual(["fail", "pass"]);
     expect(svc.task("T001")!.qa_round).toBe(1);
     // After the fix it went through review again before QA.
-    expect(svc.runs({ task: "T001" }).map((r) => r.stage)).toEqual(["implement", "review", "verify", "implement", "review", "verify"]);
+    expect(svc.runs({ task: "T001" }).map((r) => r.stage)).toEqual(["implement", "review", "verify", "fix", "review", "verify"]);
   });
 
   it("4. a forced merge conflict creates an integrate task for the tech lead", async () => {
@@ -124,7 +127,7 @@ describe("pipeline (fake claude)", () => {
     expect(integ[0]).toMatchObject({ id: "I-001", role: "tech-lead", owns: ["shared.txt"] });
     expect(integ[0]!.body).toContain("Handoff of");
     await waitFor(() => done("T001")() && done("T002")() && done("I-001")(), "all merged");
-    expect(fs.readFileSync(path.join(h.project.paths.integration, "shared.txt"), "utf8")).toBe("one and two\n");
+    expect(read(h, "shared.txt")).toBe("one and two\n");
   });
 
   it("5. ask @human blocks the task, the answer resumes the same session", async () => {
@@ -232,7 +235,7 @@ describe("pipeline (fake claude)", () => {
     await h.restart();
     const svc = h.project.svc;
     expect(svc.runs({ active: true })).toHaveLength(0);
-    expect(svc.runs({ task: "T001" }).every((x) => x.result_status === "killed")).toBe(true);
+    expect(svc.runs({ task: "T001" }).map((x) => x.result_status)).toEqual(["killed"]);
     expect(svc.state).toMatchObject({ paused: true, pauseReason: "kill switch" });
     for (const id of ["T001", "T002"]) {
       const t = svc.task(id)!;
@@ -258,25 +261,31 @@ describe("pipeline (fake claude)", () => {
     const home = path.join(h.dir, "home");
     fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(path.join(home, "server.json"), JSON.stringify({ url: h.server.url, token: h.server.tokens.master, pid: process.pid }));
-    const cli = (args: string[]) =>
-      spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(REPO, "packages/cli/src/main.ts"), ...args], {
-        cwd: h!.root,
-        env: { ...process.env, BOTSS_HOME: home, BOTSS_TOKEN: "", BOTSS_SERVER_URL: "" },
-        encoding: "utf8",
-      });
-    const r = cli(["plan", "check", dir]);
+    // Async spawn: the server runs in this process, so a blocking spawn would starve it.
+    const cli = async (args: string[]) => {
+      try {
+        const r = await promisify(execFile)(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(REPO, "packages/cli/src/main.ts"), ...args], {
+          cwd: h!.root,
+          env: { ...process.env, BOTSS_HOME: home, BOTSS_TOKEN: "", BOTSS_SERVER_URL: "" },
+          encoding: "utf8",
+        });
+        return { status: 0, stdout: r.stdout, stderr: r.stderr };
+      } catch (e: any) {
+        return { status: e.code as number, stdout: String(e.stdout ?? ""), stderr: String(e.stderr ?? "") };
+      }
+    };
+    const r = await cli(["plan", "check", dir]);
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/\[collision\] T001 and T002 can run in parallel but both own overlapping paths: "backend\/app\/\*\*" and "backend\/app\/api\/orders\.py"/);
     expect(r.stderr).toMatch(/\[cycle\] dependency cycle: T00[34] -> T00[34] -> T00[34]/);
     // Submit refuses to import.
-    const s = cli(["plan", "submit", dir]);
+    const s = await cli(["plan", "submit", dir]);
     expect(s.status).toBe(1);
     expect(s.stderr).toMatch(/Not imported/);
     expect(h.project.svc.tasks({ kind: ["build"] })).toHaveLength(0);
     // JSON output carries the structured problems with task IDs.
-    const j = cli(["plan", "check", dir, "--json"]);
+    const j = await cli(["plan", "check", dir, "--json"]);
     const parsed = JSON.parse(j.stdout);
     expect(parsed.data.problems.map((p: any) => [p.code, p.tasks.sort().join(",")])).toEqual(expect.arrayContaining([["collision", "T001,T002"], ["cycle", "T003,T004"]]));
-    // Only the tech lead may submit: an agent token for another role is refused with exit 3.
   });
 });
