@@ -18,8 +18,15 @@ function versionAtLeast(v: string, min: number[]): boolean {
   return true;
 }
 
+/** Run a tool by name. On Windows npm tools are .cmd shims, so go through the shell with one command string
+ * (the args here are fixed words, no user input). */
+function runTool(cmd: string, args: string[], opts: { input?: string; timeout: number }) {
+  const o = { encoding: "utf8" as const, timeout: opts.timeout, windowsHide: true, input: opts.input };
+  return process.platform === "win32" ? spawnSync([cmd, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "), { ...o, shell: true }) : spawnSync(cmd, args, o);
+}
+
 function probe(cmd: string, args: string[]): { ok: boolean; out: string } {
-  const r = spawnSync(cmd, args, { encoding: "utf8", shell: process.platform === "win32", timeout: 20_000, windowsHide: true });
+  const r = runTool(cmd, args, { timeout: 20_000 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
 }
 
@@ -77,11 +84,7 @@ async function doctor(p: Parsed): Promise<number> {
       rl.close();
     }
     if (go) {
-      const r = spawnSync(process.env.BOTSS_CLAUDE_BIN ?? "claude", ["-p", "Reply with the single word: ok", "--max-turns", "1", "--output-format", "json"], {
-        encoding: "utf8",
-        shell: process.platform === "win32",
-        timeout: 120_000,
-      });
+      const r = runTool(process.env.BOTSS_CLAUDE_BIN ?? "claude", ["-p", "--max-turns", "1", "--output-format", "json"], { input: "Reply with the single word: ok", timeout: 120_000 });
       const ok = r.status === 0 && /"is_error"\s*:\s*false/.test(r.stdout ?? "");
       console.log(ok ? "[ok  ] claude login            works" : `[FAIL] claude login            ${(r.stdout || r.stderr || "").slice(0, 300)}\n       → Run \`claude\` and log in.`);
       if (!ok) bad++;
