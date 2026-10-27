@@ -79,6 +79,8 @@ export const settingsSchema = z.object({
   /** Check commands run on the integration branch after each merge (from T000/T001 handoffs). */
   checks: z.array(z.string()).default([]),
   qa_per_task: z.boolean().default(true),
+  /** The project folder already had code at `botss init`: survey it first, no scaffold. */
+  existing: z.boolean().default(false),
   security_audit: z.boolean().default(false),
   max_review_rounds: z.number().int().min(1).default(3),
   max_verify_failures: z.number().int().min(1).default(3),
@@ -104,10 +106,11 @@ export function roleCap(roles: RolesFile, settings: Settings, role: Role): numbe
 }
 
 /** Initial `.botss/config.yaml` written by `botss init`. */
-export function initialConfigYaml(roles: RolesFile): string {
+export function initialConfigYaml(roles: RolesFile, opts: { existing?: boolean } = {}): string {
   const s = defaultSettings();
   const doc = {
     "# note": "Initial Botss settings. Live settings are edited in the dashboard and stored in .botss/botss.db.",
+    existing: Boolean(opts.existing),
     max_concurrent_agents: s.max_concurrent_agents,
     daily_token_budget: s.daily_token_budget,
     reserve_percent: s.reserve_percent,

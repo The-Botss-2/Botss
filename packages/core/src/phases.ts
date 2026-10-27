@@ -32,6 +32,7 @@ export const PHASE_LABELS: Record<Phase, string> = {
 export const PHASE_GATE: Partial<Record<Phase, Gate>> = {
   prd_review: "prd",
   design_direction: "design_direction",
+  design: "design",
   architecture_review: "architecture",
   plan_review: "plan",
   release_review: "release",
@@ -41,6 +42,7 @@ export const PHASE_GATE: Partial<Record<Phase, Gate>> = {
 export const GATE_DOC: Record<Gate, string | null> = {
   prd: "prd",
   design_direction: null,
+  design: "design",
   architecture: "architecture",
   plan: "plan",
   release: "release",

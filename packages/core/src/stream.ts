@@ -5,9 +5,9 @@ import { emptyUsage, type UsageTotals } from "./types.ts";
 
 export type StreamEvent =
   | { kind: "init"; sessionId: string; model?: string; tools?: string[] }
-  | { kind: "tool"; tool: string; summary: string; file?: string; toolUseId?: string }
+  | { kind: "tool"; tool: string; summary: string; file?: string; toolUseId?: string; input: Record<string, unknown> }
   | { kind: "text"; text: string }
-  | { kind: "tool_error"; toolUseId?: string; text: string }
+  | { kind: "tool_result"; toolUseId?: string; isError: boolean; text: string }
   | { kind: "retry"; error: string; attempt?: number; delayMs?: number }
   | { kind: "rate_limit"; status: string; resetsAt?: number }
   | {
@@ -49,6 +49,27 @@ export function summarizeTool(name: string, input: Record<string, unknown>): { s
       return { summary: "Updating its todo list" };
     default:
       return { summary: `Using ${name}` };
+  }
+}
+
+function clip(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}\n…(${s.length - n} more characters)` : s;
+}
+
+/** Tool input for the live transcript: the useful fields, each capped, so the event log stays small. */
+export function trimInput(tool: string, input: Record<string, unknown>): Record<string, unknown> {
+  const pick = (keys: string[]) => Object.fromEntries(keys.filter((k) => input[k] !== undefined).map((k) => [k, typeof input[k] === "string" ? clip(input[k] as string, 1500) : input[k]]));
+  switch (tool) {
+    case "Edit":
+      return pick(["file_path", "old_string", "new_string"]);
+    case "MultiEdit":
+      return { file_path: input.file_path, edits: Array.isArray(input.edits) ? (input.edits as unknown[]).length : 0 };
+    case "Write":
+      return pick(["file_path", "content"]);
+    case "Bash":
+      return pick(["command", "description"]);
+    default:
+      return pick(["file_path", "path", "pattern", "glob", "notebook_path", "url"]);
   }
 }
 
@@ -118,9 +139,9 @@ export function parseStreamLine(line: string): StreamEvent[] {
       for (const block of ev.message?.content ?? []) {
         if (block?.type === "tool_use") {
           const s = summarizeTool(String(block.name), (block.input ?? {}) as Record<string, unknown>);
-          out.push({ kind: "tool", tool: String(block.name), toolUseId: block.id, ...s });
-        } else if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 12) {
-          out.push({ kind: "text", text: short(block.text, 200) });
+          out.push({ kind: "tool", tool: String(block.name), toolUseId: block.id, ...s, input: trimInput(String(block.name), block.input ?? {}) });
+        } else if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
+          out.push({ kind: "text", text: clip(block.text.trim(), 4000) });
         }
       }
       break;
@@ -129,11 +150,11 @@ export function parseStreamLine(line: string): StreamEvent[] {
       const content = ev.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
-          if (block?.type === "tool_result" && block.is_error) {
+          if (block?.type === "tool_result") {
             const text = Array.isArray(block.content)
-              ? block.content.map((c: any) => c?.text ?? "").join(" ")
+              ? block.content.map((c: any) => c?.text ?? "").join("\n")
               : String(block.content ?? "");
-            out.push({ kind: "tool_error", toolUseId: block.tool_use_id, text: short(text, 240) });
+            out.push({ kind: "tool_result", toolUseId: block.tool_use_id, isError: Boolean(block.is_error), text: clip(text, 1500) });
           }
         }
       }

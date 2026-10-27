@@ -78,26 +78,30 @@ cd botss
 corepack pnpm install
 corepack pnpm build          # builds the dashboard
 
-# 2. Make the `botss` command available (pick one)
-#    macOS / Linux (add to ~/.zshrc or ~/.bashrc):
-alias botss="node $(pwd)/packages/cli/bin/botss.js"
-#    Windows PowerShell (add to your $PROFILE):
-#    function botss { node "C:\path\to\botss\packages\cli\bin\botss.js" @args }
+# 2. Install the `botss` command so it works from any folder
+node packages/cli/bin/botss.js setup
+#    Windows: adds %USERPROFILE%\.botss\bin to your user PATH.
+#    macOS / Linux: installs ~/.local/bin/botss (it tells you if that folder is not on your PATH).
+#    Then open a NEW terminal.
 
 # 3. Check your machine
 botss doctor
-
-# 4. Create a project folder for the app you want built
-botss init ~/code/my-app
-
-# 5. Start Botss
-cd ~/code/my-app
-botss up
 ```
 
-`botss up` prints a link like `http://127.0.0.1:4800/?token=…` and opens it in your browser. Keep that terminal open: **Ctrl+C stops Botss and every agent.**
+From then on, use Botss from **any folder**:
 
-> 💡 `botss init` works on a new or an existing folder. Botss never changes your current branch. It works on a separate `botss/integration` branch and keeps agent worktrees next to your folder in `../.botss-worktrees/`.
+```bash
+cd ~/code/my-app        # a new, empty folder or an existing project
+botss up                # starts Botss and opens the dashboard for this folder
+```
+
+* In a folder that is already a Botss project, the dashboard opens that project.
+* In any other folder, the dashboard opens a **folder picker** at that location. Browse, create a new folder, and choose where the app and all its files should go. Botss sets the folder up for you.
+* `botss init` does the setup from the terminal instead, if you prefer.
+
+`botss up` prints a link like `http://127.0.0.1:4800/?token=…` and opens it in your browser. Keep that terminal open: **Ctrl+C stops Botss and every agent.** If Botss is already running, `botss up` in another folder just opens the dashboard there.
+
+> 💡 Botss never changes your current branch. It works on a separate `botss/integration` branch and keeps agent worktrees next to your folder in `../.botss-worktrees/`. To remove the global command: `botss setup --uninstall`.
 
 ---
 
@@ -109,10 +113,11 @@ Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.m
 2. **Idea.** Describe the app, add screenshots or links if you have them, choose a stakes level, and submit.
 3. **Questions.** The PM sends one batch of questions, each with a recommended option and why it matters. Answer them, or click **Accept all recommendations**.
 4. **PRD.** Read it in **Documents**. Click **Approve**, or **Request changes** with comments, and the PM revises it.
-5. **Design.** Pick one of the visual directions. The designer then produces tokens and screen mockups, which you can preview at desktop and mobile sizes.
+5. **Design.** Each visual direction comes with a live preview of your main screen, so you choose from something you can see. The designer then produces tokens and a mockup of every screen. **Review the mockups at desktop and mobile sizes and approve the design** (or ask for changes) before any architecture or code is written.
 6. **Architecture.** Review the tech lead's architecture and API contract, then approve it.
 7. **Plan and team.** In **Team builder**, see every task, the dependency graph, the critical path, and an estimate of tokens and time. Pick how many agents per role (more agents than the plan has parallel lanes just wait), then click **Approve plan & start build**.
-8. **Watch the build.** On the **Live board**, tasks move from *To do* to *Done*. The **Team feed** shows agents messaging each other, reviews, merges, and blocked actions. **Agents** shows what each agent is doing right now. If an agent needs a decision from you, it appears in **Questions**.
+8. **Watch the build.** **Agents** shows every working agent live: what it is thinking, each file it edits (with the change), each command it runs and its output, as it happens. On the **Live board**, tasks move from *To do* to *Done*. The **Team feed** shows agents messaging each other, reviews, merges, and blocked actions. If an agent needs a decision from you, it appears in **Questions**.
+   * **Changed your mind?** Click **Request a change** in the header at any point after the PRD is approved. The PM updates the PRD (you approve), the tech lead updates the plan (you approve), and new tasks join the build. Finished work is kept unless your change says otherwise.
 9. **Release.** QA runs the full suite on the merged branch and Botss writes a release summary. Approve it, then merge the `botss/integration` branch into your main branch when you are ready:
 
    ```bash
@@ -124,7 +129,8 @@ Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.m
 ## How it works
 
 ```
- Idea ─▶ PM questions ─▶ PRD ──[you approve]──▶ Designer directions ──[you pick]──▶ tokens + screens
+ Idea ─▶ PM questions ─▶ PRD ──[you approve]──▶ Designer directions + previews ──[you pick]──▶
+         tokens + screen mockups ──[you approve]──▶
       ─▶ Tech lead: architecture + contracts ──[you approve]──▶ task plan ──[you approve + pick team]──▶
          T000 scaffold ─▶ T001 infra ─▶ parallel tasks:
                                         engineer (test first, verify) ─▶ reviewer ─▶ QA ─▶ merge + checks
@@ -135,6 +141,12 @@ Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.m
 * **Agents share state only through the `botss` CLI:** `botss task done`, `botss ask @human`, `botss msg @frontend`, `botss review approve`, and so on ([reference](skills/team-protocol/references/botss-cli.md)). The server checks role permissions on every command.
 * **Plain code makes the decisions.** Scheduling, permissions, plan validation, and merging are deterministic code, not an LLM. A task is "done" only when its `verify` command passes. Merges happen one at a time, and if a merge conflicts or the checks fail, the tech lead gets an integration task.
 * **Everything is visible.** Each agent's actions, messages, decisions, reviews, and raw output are stored and streamed to the dashboard, and survive a page reload.
+* **Only what you asked for.** Every role follows a scope rule: build exactly what you said and what you approved. Anything an agent thinks is missing becomes a question or a "Later" note you can see, never a silent extra. Reviewers flag unrequested additions.
+* **Token-thrifty teamwork.** Each role's system prompt is identical across runs so Claude Code's prompt cache is reused. Messages are short and capped (details go in files), questions to the same role are answered in one batched run, inboxes are trimmed, and interrupted agents resume their own sessions instead of starting over.
+
+### Existing projects
+
+Run `botss up` (or `botss init`) inside a folder that already has code. Botss commits the existing code as its starting point if the folder is not a git repo yet, and on your first request the **tech lead surveys the codebase** first: stack, layout, conventions, and the exact test and build commands, written to a short `codebase.md` everyone reads instead of re-exploring. Then the PM plans **only the change you asked for** (a feature or a fix), there is no scaffold, and every merge runs your project's own checks.
 
 More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code](docs/claude-code-integration.md) · [Security review](docs/security-review.md) · [Design decisions](docs/decisions/)
 
@@ -161,10 +173,10 @@ More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code
 | **Idea** | Describe the app, add attachments and links |
 | **Questions** | Answer batched questions (with recommendations) and anything an agent asks `@human`; see alerts |
 | **Documents** | Read the PRD, architecture, contracts (OpenAPI rendered), decisions, and plan; compare versions, comment, approve |
-| **Design** | Pick a direction, browse tokens, preview mockups at desktop and mobile sizes |
+| **Design** | Compare live previews of each direction, browse tokens, review every screen mockup at desktop and mobile sizes, approve the design |
 | **Team builder** | Task graph, critical path, estimate; choose agents per role and models; start the build |
 | **Live board** | Kanban of every task; open one for its file, timeline, handoff, review, QA report, diff, and verify output |
-| **Agents** | One card per agent: current action, file, elapsed time, tokens; recent events and raw stream; pause per agent |
+| **Agents** | Watch agents work in real time: a live transcript per agent (its reasoning, each edit with an inline diff, each command and its output), elapsed time, tokens; pause or stop one agent |
 | **Team feed** | Everything the team does, as it happens; filter by role or task |
 | **Preview** | Run the merged app (Docker) and use it in the dashboard |
 | **Usage** | Tokens today and over 7 days, by role and task; budget and usage-limit events |
@@ -201,6 +213,7 @@ The header always shows the phase, your quota, open questions, **Pause/Resume**,
 
 | Command | What it does |
 |---|---|
+| `botss setup [--uninstall]` | Install (or remove) the global `botss` command so it works from any folder |
 | `botss init [folder]` | Make a folder a Botss project (git repo, `.botss/`, skills, `botss/integration` branch) |
 | `botss doctor` | Check prerequisites and print fixes. `--login` also confirms Claude Code is logged in (asks first; sends one tiny prompt) |
 | `botss up [--port N] [--no-open]` | Start the server and dashboard on `127.0.0.1` (default port 4800) |
@@ -278,7 +291,10 @@ Only Claude Code talks to Claude, exactly as when you use `claude` yourself. The
 Yes. Tell the PM in your idea or answers (for example "use Django and Vue"). The tech lead records the stack in the architecture, and the skills adapt. The built-in skills have the most detail for the default stack.
 
 **Can I add Botss to an existing app?**
-Yes. Run `botss init` in the repo. The tech lead plans around the existing code. Start with a small, well-defined feature.
+Yes. Run `botss up` in the project folder and open it from the dashboard (or run `botss init` there). The tech lead surveys the code first, and the team changes only what you ask for. Commit your work before you start: agents begin from your last commit. See [Existing projects](#existing-projects).
+
+**Can I change the plan once the build has started?**
+Yes. Use **Request a change** in the header. The PM updates the PRD and the tech lead updates the plan, each with your approval; tasks already finished are kept, and new tasks wait until you approve the updated plan.
 
 **An agent is stuck or looping. What do I do?**
 Open its card on **Agents** to see the raw output, or the task on the **Live board** for its verify output. You can pause that agent, unblock or hold the task, answer its question, or hit the kill switch. Tasks that fail three times stop on their own and alert you.

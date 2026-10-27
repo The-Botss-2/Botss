@@ -38,7 +38,9 @@ describe("single task end to end (fake claude)", () => {
     expect(inv).toMatchObject({ role: "tech-lead", task: "T000", mode: "scaffold", resume: null });
     expect(inv.argv).toEqual(expect.arrayContaining(["-p", "--output-format", "stream-json", "--verbose", "--session-id", "--append-system-prompt-file", "--settings", "--max-turns"]));
     const system = fs.readFileSync(path.join(h.project.paths.run(runs[0]!.id), "system.md"), "utf8");
-    expect(system).toContain("You are **tech-lead-1**");
+    // The system prompt is the same for every run of a role (prompt caching); identity goes in the run prompt.
+    expect(system).not.toContain("tech-lead-1");
+    expect(fs.readFileSync(path.join(h.project.paths.run(runs[0]!.id), "prompt.md"), "utf8")).toContain("You are **tech-lead-1**");
     expect(system).toContain("<!-- skill: team-protocol -->");
     expect(system.indexOf("skill: team-protocol")).toBeLessThan(system.indexOf("skill: tech-lead"));
     expect(system).not.toContain("<!-- skill: ui-ux-designer -->");

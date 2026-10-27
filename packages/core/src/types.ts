@@ -53,7 +53,7 @@ export const PHASES = [
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
-export const GATES = ["prd", "design_direction", "architecture", "plan", "release"] as const;
+export const GATES = ["prd", "design_direction", "design", "architecture", "plan", "release"] as const;
 export type Gate = (typeof GATES)[number];
 
 export type RunMode =
@@ -75,7 +75,10 @@ export type RunMode =
   | "ruling"
   | "journey"
   | "release"
-  | "audit";
+  | "audit"
+  | "survey"
+  | "change"
+  | "replan";
 
 export type DocStatus = "draft" | "submitted" | "approved" | "changes_requested";
 

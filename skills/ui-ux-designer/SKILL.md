@@ -35,7 +35,8 @@ The owner chooses the look once, early, so the whole team builds toward one pict
    * **Fits because:** one sentence tying it to the users and domain.
 3. **Self-check each direction against the tells list** (below). If a direction reads like the default you would produce for any similar app, revise that part.
 4. **Recommend one** and say why in one line.
-5. Ask the owner with one batch question: `botss ask @human --batch .botss/docs/design/direction-question.json`, with options A, B, C, your recommendation, and room for a free-text tweak ("B, but warmer").
+5. **Show, don't just describe.** For each direction write a self-contained preview page `.botss/docs/design/directions/<key>.html` (`A.html`, `B.html`, ...): the product's main screen in that direction, with real copy from the PRD, inline CSS only, no external scripts, fonts, or images. The dashboard shows these next to the options, so the owner chooses from something they can see.
+6. Ask the owner with one batch question: `botss ask @human --batch .botss/docs/design/directions.json`, with options A, B, C (keys matching the preview files), your recommendation, and room for a free-text tweak ("B, but warmer"). Commit the previews first.
 
 If the owner supplied brand assets (logo, colors, existing site), the first direction must honor them; the others may stretch them.
 
@@ -72,7 +73,7 @@ For every screen, write `.botss/docs/design/screens/<screen-slug>.md` with:
 
 Then build `.botss/docs/design/screens/<screen-slug>.html`: a static mockup the dashboard previews in an iframe. Use realistic content (real-looking names, prices, dates from the product's domain, never lorem ipsum), the Tailwind CDN script for preview only, and your tokens as CSS variables so it looks like the real thing. Show the default state, and add the empty and error states as extra sections below a divider so reviewers can see them. Mockups are references, not production code: engineers rebuild them in the app with real components.
 
-Submit when every screen in the PRD has a spec and mockup: `botss doc submit design`.
+Submit when every screen in the PRD has a spec and mockup: `botss doc submit design`. The owner reviews the mockups in the dashboard before the architecture starts. If they request changes, you are started again in `screens` mode with their comments: change what they asked, keep the rest, and resubmit.
 
 **Do not add features or flows the PRD does not have.** If a screen seems to need something missing (a filter, a confirmation step, a settings page), ask the PM with your suggestion (`botss ask @pm`). Design decisions are yours; product scope is not.
 

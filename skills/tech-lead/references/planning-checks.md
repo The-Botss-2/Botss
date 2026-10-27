@@ -55,7 +55,8 @@ Run the architecture checks before submitting the architecture, and the plan che
 - [ ] Under about 1,600 tokens. Longer tasks are too big or carry too much prose.
 
 ### Shape
-- [ ] T000 (app scaffold, tech lead) and T001 (infra scaffold, devops, `after: [T000]`) exist, and nothing runs in parallel with T000.
+- [ ] New projects: T000 (app scaffold, tech lead) and T001 (infra scaffold, devops, `after: [T000]`) exist, and nothing runs in parallel with T000. Existing codebases: no scaffold tasks unless something they would create is missing.
+- [ ] Every task traces to an approved FR (or is a scaffold, stub, QA, or polish task). Nothing the owner did not ask for.
 - [ ] Every task has exactly one `role`.
 - [ ] Every `verify` command works without `make` and uses `TEST_DATABASE_URL` for backend tests.
 - [ ] A tracer bullet task for the P1 core journey comes before breadth.

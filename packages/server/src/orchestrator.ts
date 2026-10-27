@@ -35,7 +35,7 @@ import { agentRuntimeEnv, allocatePortBlock } from "./ports.ts";
 import type { Project } from "./project.ts";
 import { buildRunPrompt, buildSystemPrompt, roleTitle } from "./prompts.ts";
 import type { RunExit } from "./runner.ts";
-import type { TaskRow } from "./service.ts";
+import type { ChangeRequest, TaskRow } from "./service.ts";
 import { runShell } from "./shell.ts";
 import { hashToken } from "./tokens.ts";
 
@@ -253,10 +253,7 @@ export class Orchestrator {
     agent: string,
   ): Promise<{ cwd: string; branch: string; shared: boolean }> {
     const integ = this.p.paths.integration;
-    if (
-      t.kind === "planning" ||
-      (t.kind === "answer" && !["build", "release_review"].includes(this.svc.phase))
-    ) {
+    if ((t.kind === "planning" || t.kind === "answer") && !this.buildStarted()) {
       return { cwd: integ, branch: INTEGRATION_BRANCH, shared: true };
     }
     if (t.worktree && fs.existsSync(path.join(t.worktree, ".git")))
@@ -300,7 +297,7 @@ export class Orchestrator {
     const inbox = this.svc.inbox(agent, role).slice(-20);
     const prompt = resume
       ? resume.prompt
-      : buildRunPrompt({ mode, stage, task: t, inbox, extra, handoff, diffStat: stat });
+      : buildRunPrompt({ mode, stage, task: t, inbox, extra, handoff, diffStat: stat, agent, roleTitle: roleTitle(this.p.roles, role) });
     const writable = this.writableFor(t, role, stage);
     const runId = await this.launch({
       agent,
@@ -352,16 +349,7 @@ export class Orchestrator {
     const systemFile = path.join(dir, "system.md");
     fs.writeFileSync(
       systemFile,
-      buildSystemPrompt({
-        agent: o.agent,
-        role: o.role,
-        roleTitle: roleTitle(this.p.roles, o.role),
-        project: this.p.paths.name,
-        task: o.task.kind === "planning" ? null : o.task.id,
-        mode: o.mode,
-        skills,
-        skillsDir: this.p.skillsDir(),
-      }),
+      buildSystemPrompt({ roleTitle: roleTitle(this.p.roles, o.role), project: this.p.paths.name, skills, skillsDir: this.p.skillsDir() }),
     );
     fs.writeFileSync(path.join(dir, "prompt.md"), o.prompt);
     const a = this.svc.agent(o.agent)!;
@@ -534,14 +522,24 @@ export class Orchestrator {
         }
         this.svc.updateAgent(run.agent, { last_action: ev.summary, last_file: ev.file ?? null });
         this.svc.updateRun(run.runId, { last_action: ev.summary, last_file: ev.file ?? null });
-        this.svc.emit("run.tool", ev.summary, { tool: ev.tool, file: ev.file ?? null }, meta);
+        this.svc.emit("run.tool", ev.summary, { tool: ev.tool, file: ev.file ?? null, input: ev.input, toolUseId: ev.toolUseId ?? null }, meta);
         break;
-      case "text":
-        this.svc.emit("run.text", ev.text, {}, meta);
+      case "text": {
+        const one = ev.text.replace(/\s+/g, " ");
+        this.svc.emit("run.text", one.length > 200 ? `${one.slice(0, 199)}…` : one, { text: ev.text }, meta);
         break;
-      case "tool_error":
-        if (/Botss guard/.test(ev.text)) this.svc.emit("run.blocked", ev.text, {}, meta);
+      }
+      case "tool_result": {
+        const first = ev.text.split("\n").find((l) => l.trim()) ?? "";
+        this.svc.emit(
+          "run.result",
+          `${ev.isError ? "✗ " : ""}${first.slice(0, 160) || (ev.isError ? "error" : "ok")}`,
+          { toolUseId: ev.toolUseId ?? null, isError: ev.isError, text: ev.text },
+          meta,
+        );
+        if (ev.isError && /Botss guard/.test(ev.text)) this.svc.emit("run.blocked", ev.text.slice(0, 400), {}, meta);
         break;
+      }
       case "retry":
         this.svc.emit("run.retry", `API retry (${ev.error})`, { error: ev.error }, meta);
         break;
@@ -701,20 +699,26 @@ export class Orchestrator {
   createPlanningTask(
     role: Role,
     mode: RunMode,
-    opts: { body?: string; resume?: { session: string; prompt: string } | null; note?: string } = {},
+    opts: { body?: string; resume?: { session: string; prompt: string } | null; note?: string; changeId?: string } = {},
   ): TaskRow {
     const id = this.svc.nextId("P");
     return this.svc.createTask({
       id,
       kind: "planning",
       mode,
-      title: `${roleTitle(this.p.roles, role)}: ${mode}`,
+      title: `${roleTitle(this.p.roles, role)}: ${mode}${opts.changeId ? ` (${opts.changeId})` : ""}`,
       role,
       status: "ready",
       priority: 0,
       body: opts.body ?? "",
-      meta: { resume: opts.resume ?? null, note: opts.note ?? null },
+      meta: { resume: opts.resume ?? null, note: opts.note ?? null, changeId: opts.changeId },
     });
+  }
+
+  /** Planning and answer work shares the integration worktree only before the build; afterwards it gets its
+   * own worktree and is merged like a task, so it never races the merge pipeline. */
+  private buildStarted(): boolean {
+    return ["build", "release_review", "done"].includes(this.svc.phase) || this.svc.tasks({ kind: ["build"] }).some((t) => t.status !== "todo");
   }
 
   private async commitIntegration(message: string): Promise<void> {
@@ -724,7 +728,6 @@ export class Orchestrator {
   }
 
   private planningOutcome(t: TaskRow, sinceRun: string): boolean {
-    const mode = t.mode;
     const run = this.svc.run(sinceRun);
     const since = run?.started_at ?? t.created_at;
     const asked = this.svc.questions().some((q) => q.task === t.id && q.kind === "batch");
@@ -732,30 +735,41 @@ export class Orchestrator {
       const d = this.svc.doc(name);
       return Boolean(d && d.versions.some((v: any) => v.created_at >= since));
     };
-    switch (mode) {
+    switch (t.mode) {
       case "discover":
       case "direction":
         return asked;
       case "draft":
       case "revise":
+      case "change":
         return docSince("prd");
       case "architect":
         return docSince("architecture");
       case "plan":
+      case "replan":
         return docSince("plan");
       case "screens":
         return docSince("design");
+      case "survey":
+        return docSince("codebase");
       default:
         return true;
     }
   }
 
   private async afterPlanningRun(t: TaskRow, run: ActiveRun, ok: boolean): Promise<void> {
-    await this.commitIntegration(`botss: ${t.mode} (${run.agent})`);
+    const msg = `botss: ${t.mode} (${run.agent})`;
+    if (t.worktree) await commitAll(t.worktree, msg, ["-A", "--", ".botss/docs", ".botss/tasks"]).catch(() => false);
+    else await this.commitIntegration(msg);
     if (ok && this.planningOutcome(t, run.runId)) {
-      this.svc.setStatus(t.id, "done", { force: true, reason: `${t.mode} complete` });
       this.svc.updateTask(t.id, { session_id: run.sessionId });
-      await this.onPlanningDone(t, run.sessionId);
+      if (t.worktree) {
+        this.svc.setStatus(t.id, "review", { force: true, reason: `${t.mode} complete; merging` });
+        await this.queueMerge(t.id); // onPlanningDone runs after the merge
+        return;
+      }
+      this.svc.setStatus(t.id, "done", { force: true, reason: `${t.mode} complete` });
+      await this.onPlanningDone(this.svc.task(t.id)!, run.sessionId);
       return;
     }
     const expected: Record<string, string> = {
@@ -763,9 +777,12 @@ export class Orchestrator {
       direction: "post the directions with `botss ask @human --batch`",
       draft: "submit the PRD with `botss doc submit prd`",
       revise: "resubmit the PRD with `botss doc submit prd`",
+      change: "update and resubmit the PRD with `botss doc submit prd`",
       architect: "submit the architecture with `botss doc submit architecture`",
       plan: "submit a valid plan with `botss plan submit .botss/tasks/`",
+      replan: "submit the updated plan with `botss plan submit .botss/tasks/`",
       screens: "submit the design with `botss doc submit design`",
+      survey: "submit the codebase summary with `botss doc submit codebase`",
     };
     this.failRun(
       t,
@@ -777,19 +794,17 @@ export class Orchestrator {
 
   private async onPlanningDone(t: TaskRow, session: string): Promise<void> {
     switch (t.mode) {
+      case "survey":
+        this.captureChecksFrom(this.svc.doc("codebase")?.content ?? "", "codebase summary");
+        this.createPlanningTask("pm", "discover");
+        break;
       case "system":
         this.createPlanningTask("designer", "screens", {
-          resume: {
-            session,
-            prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }),
-          },
+          resume: { session, prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }) },
         });
         break;
-      case "screens":
-        this.svc.setPhase("architecture_review");
-        this.createPlanningTask("tech-lead", "architect");
-        break;
       default:
+        // screens → waits for the design gate; change / replan → wait for the PRD / plan gates.
         break;
     }
   }
@@ -801,48 +816,47 @@ export class Orchestrator {
     stakes?: string;
     links?: string[];
     attachments?: { name: string; data: string }[];
+    kind?: "new" | "feature" | "fix";
   }): Promise<void> {
     if (!["idea", "discovery"].includes(this.svc.phase))
       throw new Error(`the idea can only be submitted in the idea phase (now ${this.svc.phase})`);
+    const existing = this.svc.settings.existing;
+    const kind = input.kind ?? (existing ? "feature" : "new");
     const integ = this.p.paths.integration;
     const docs = path.join(integ, ".botss/docs");
     fs.mkdirSync(path.join(docs, "attachments"), { recursive: true });
-    const names: string[] = [];
-    for (const a of input.attachments ?? []) {
-      const safe =
-        path
-          .basename(a.name)
-          .replace(/[^A-Za-z0-9._-]/g, "_")
-          .slice(0, 100) || "attachment";
-      fs.writeFileSync(path.join(docs, "attachments", safe), Buffer.from(a.data, "base64"));
-      names.push(safe);
-    }
+    const names = this.saveAttachments(path.join(docs, "attachments"), input.attachments ?? []);
     const md = [
-      "# Idea",
+      existing ? `# Request (${kind === "fix" ? "fix" : "feature"} in an existing codebase)` : "# Idea",
       "",
       input.text.trim(),
       "",
       input.stakes ? `**Stakes:** ${input.stakes}\n` : "",
+      existing ? "**Existing codebase:** change only what this request asks; the tech lead's survey is in `.botss/docs/codebase.md`.\n" : "",
       input.links?.length ? `## Links\n\n${input.links.map((l) => `- ${l}`).join("\n")}\n` : "",
-      names.length
-        ? `## Attachments\n\n${names.map((n) => `- .botss/docs/attachments/${n}`).join("\n")}\n`
-        : "",
+      names.length ? `## Attachments\n\n${names.map((n) => `- .botss/docs/attachments/${n}`).join("\n")}\n` : "",
     ].join("\n");
     fs.writeFileSync(path.join(docs, "idea.md"), md);
     await commitAll(integ, "botss: owner idea", ["-A", "--", ".botss/docs"]);
-    this.svc.patchState({
-      idea: { text: input.text, stakes: input.stakes, links: input.links ?? [], attachments: names },
-    });
+    this.svc.patchState({ idea: { text: input.text, stakes: input.stakes, links: input.links ?? [], attachments: names, kind } });
     this.svc.submitDoc("idea", ".botss/docs/idea.md", md, "human", null, "approved");
-    this.svc.emit(
-      "idea.submitted",
-      "Owner submitted the idea",
-      { attachments: names.length },
-      { actor: "human" },
-    );
+    this.svc.emit("idea.submitted", existing ? `Owner asked for a ${kind} in the existing codebase` : "Owner submitted the idea", { attachments: names.length, kind }, { actor: "human" });
     this.svc.setPhase("discovery");
-    this.createPlanningTask("pm", "discover");
+    // Existing codebase: the tech lead reads it first, so the PM and the plan build on what is there.
+    if (existing) this.createPlanningTask("tech-lead", "survey");
+    else this.createPlanningTask("pm", "discover");
     void this.tick();
+  }
+
+  private saveAttachments(dir: string, list: { name: string; data: string }[]): string[] {
+    fs.mkdirSync(dir, { recursive: true });
+    const names: string[] = [];
+    for (const a of list) {
+      const safe = path.basename(a.name).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100) || "attachment";
+      fs.writeFileSync(path.join(dir, safe), Buffer.from(a.data, "base64"));
+      names.push(safe);
+    }
+    return names;
   }
 
   gateEnabled(gate: Gate): boolean {
@@ -852,35 +866,70 @@ export class Orchestrator {
   /** Called by the service commands when an agent submits a document. */
   async onDocSubmitted(name: string): Promise<void> {
     const phase = this.svc.phase;
-    if (name === "prd" && ["discovery", "prd_review", "idea"].includes(phase)) {
+    const ch = this.activeChange();
+    if (name === "prd" && ch?.status === "pm") {
+      this.setChange(ch.id, "prd_review");
+      if (!this.gateEnabled("prd")) await this.approve("prd", "auto-approved (gate off)", "auto");
+    } else if (name === "plan" && ch?.status === "replan") {
+      this.setChange(ch.id, "plan_review");
+      if (!this.gateEnabled("plan")) await this.approve("plan", "auto-approved (gate off)", "auto");
+    } else if (name === "prd" && ["discovery", "prd_review", "idea"].includes(phase)) {
       this.svc.setPhase("prd_review");
       if (!this.gateEnabled("prd")) await this.approve("prd", "auto-approved (gate off)", "auto");
+    } else if (name === "design" && phase === "design") {
+      if (!this.gateEnabled("design")) await this.approve("design", "auto-approved (gate off)", "auto");
     } else if (name === "architecture" && phase === "architecture_review") {
-      if (!this.gateEnabled("architecture"))
-        await this.approve("architecture", "auto-approved (gate off)", "auto");
+      if (!this.gateEnabled("architecture")) await this.approve("architecture", "auto-approved (gate off)", "auto");
     } else if (name === "plan" && phase === "plan_review") {
       if (!this.gateEnabled("plan")) await this.approve("plan", "auto-approved (gate off)", "auto");
     }
   }
 
-  async approve(
-    gate: Gate,
-    comment: string | null,
-    actor = "human",
-    team?: Record<string, number>,
-  ): Promise<void> {
+  /** The gate is open through the phase flow, or through an active change request. */
+  private gateVia(gate: Gate): "phase" | "change" {
+    const ch = this.activeChange();
+    if (ch && ((gate === "prd" && ch.status === "prd_review") || (gate === "plan" && ch.status === "plan_review"))) return "change";
     const phase = this.svc.phase;
     const expect = Object.entries(PHASE_GATE).find(([, g]) => g === gate)?.[0];
     if (expect !== phase) throw new Error(`gate ${gate} is not open (phase is ${phase})`);
+    return "phase";
+  }
+
+  async approve(gate: Gate, comment: string | null, actor = "human", team?: Record<string, number>): Promise<void> {
+    const via = this.gateVia(gate);
     const doc = gate === "design_direction" ? null : gate;
     const d = doc ? this.svc.doc(doc) : null;
     if (doc && !d) throw new Error(`nothing submitted for ${gate} yet`);
     if (doc) this.svc.setDocStatus(doc, "approved", comment, actor);
     this.svc.recordApproval(gate, doc, d?.version ?? null, "approved", comment);
+    if (via === "change") {
+      const ch = this.activeChange()!;
+      if (gate === "prd") {
+        if (this.svc.tasks({ kind: ["build"] }).length === 0) {
+          // No plan yet: the later planning steps read the updated PRD.
+          this.setChange(ch.id, "applied");
+        } else {
+          this.setChange(ch.id, "replan");
+          this.createPlanningTask("tech-lead", "replan", { body: this.changeBody(ch), changeId: ch.id });
+        }
+      } else {
+        if (team) this.svc.updateSettings({ team }, actor);
+        for (const t of this.svc.tasks({ kind: ["build"] })) if (t.hold === "plan") this.svc.updateTask(t.id, { hold: null });
+        this.setChange(ch.id, "applied");
+        if (["release_review", "done"].includes(this.svc.phase)) this.reopenBuild();
+        this.svc.emit("plan.approved", `Updated plan approved (${ch.id})`, { change: ch.id }, { actor });
+      }
+      void this.tick();
+      return;
+    }
     switch (gate) {
       case "prd":
         this.svc.setPhase("design_direction");
         this.createPlanningTask("designer", "direction");
+        break;
+      case "design":
+        this.svc.setPhase("architecture_review");
+        this.createPlanningTask("tech-lead", "architect");
         break;
       case "architecture":
         this.svc.setPhase("plan_review");
@@ -888,17 +937,13 @@ export class Orchestrator {
         break;
       case "plan":
         if (team) this.svc.updateSettings({ team }, actor);
+        for (const t of this.svc.tasks({ kind: ["build"] })) if (t.hold === "plan") this.svc.updateTask(t.id, { hold: null });
         this.svc.setPhase("build");
         this.svc.emit("plan.approved", "Plan approved: build starts", { team: team ?? null }, { actor });
         break;
       case "release":
         this.svc.setPhase("done");
-        this.svc.emit(
-          "project.done",
-          "Release approved. Merge botss/integration into your main branch when you are ready.",
-          {},
-          { actor },
-        );
+        this.svc.emit("project.done", "Release approved. Merge botss/integration into your main branch when you are ready.", {}, { actor });
         break;
       case "design_direction":
         break;
@@ -907,32 +952,39 @@ export class Orchestrator {
   }
 
   async requestChanges(gate: Gate, comment: string, actor = "human"): Promise<void> {
-    const phase = this.svc.phase;
-    const expect = Object.entries(PHASE_GATE).find(([, g]) => g === gate)?.[0];
-    if (expect !== phase) throw new Error(`gate ${gate} is not open (phase is ${phase})`);
+    const via = this.gateVia(gate);
     const doc = gate === "design_direction" ? null : gate;
     const d = doc ? this.svc.doc(doc) : null;
     if (doc && d) this.svc.setDocStatus(doc, "changes_requested", comment, actor);
     this.svc.recordApproval(gate, doc, d?.version ?? null, "changes_requested", comment);
     const comments = d
-      ? (d.versions.at(-1)?.comments ?? [])
-          .map((c: any) => `- ${c.anchor ? `(${c.anchor}) ` : ""}${c.body}`)
-          .join("\n")
+      ? (d.versions.at(-1)?.comments ?? []).map((c: any) => `- ${c.anchor ? `(${c.anchor}) ` : ""}${c.body}`).join("\n")
       : `- ${comment}`;
     const note = `## Owner's comments\n\n${comments || `- ${comment}`}`;
+    if (via === "change") {
+      const ch = this.activeChange()!;
+      if (gate === "prd") {
+        this.setChange(ch.id, "pm");
+        this.createPlanningTask("pm", "change", { body: this.changeBody(ch), note: `The owner asked for changes to your PRD update.\n\n${note}`, changeId: ch.id });
+      } else {
+        this.setChange(ch.id, "replan");
+        this.createPlanningTask("tech-lead", "replan", { body: this.changeBody(ch), note: `The owner asked for changes to the updated plan.\n\n${note}`, changeId: ch.id });
+      }
+      void this.tick();
+      return;
+    }
     switch (gate) {
       case "prd":
         this.createPlanningTask("pm", "revise", { note });
         break;
+      case "design":
+        this.createPlanningTask("designer", "screens", { note: `The owner reviewed the screens and asked for changes. Update the affected specs and mockups, then resubmit.\n\n${note}` });
+        break;
       case "architecture":
-        this.createPlanningTask("tech-lead", "architect", {
-          note: `The owner requested changes to the architecture.\n\n${note}`,
-        });
+        this.createPlanningTask("tech-lead", "architect", { note: `The owner requested changes to the architecture.\n\n${note}` });
         break;
       case "plan":
-        this.createPlanningTask("tech-lead", "plan", {
-          note: `The owner requested changes to the plan.\n\n${note}`,
-        });
+        this.createPlanningTask("tech-lead", "plan", { note: `The owner requested changes to the plan.\n\n${note}` });
         break;
       case "release": {
         this.svc.setPhase("build");
@@ -957,6 +1009,78 @@ export class Orchestrator {
     void this.tick();
   }
 
+  // ------------------------------------------------------------------------------- change requests
+
+  changes(): ChangeRequest[] {
+    return this.svc.state.changes ?? [];
+  }
+
+  activeChange(): ChangeRequest | null {
+    return this.changes().find((c) => ["pm", "prd_review", "replan", "plan_review"].includes(c.status)) ?? null;
+  }
+
+  private setChange(id: string, status: ChangeRequest["status"]): void {
+    const list = this.changes().map((c) => (c.id === id ? { ...c, status, updated_at: new Date().toISOString() } : c));
+    this.svc.patchState({ changes: list });
+    this.svc.emit("change.status", `${id}: ${status.replace("_", " ")}`, { id, status }, { actor: "orchestrator" });
+  }
+
+  private changeBody(ch: ChangeRequest): string {
+    return [
+      `## Change request ${ch.id} from the owner`,
+      "",
+      ch.text,
+      "",
+      ch.attachments.length ? `Attachments (read them): ${ch.attachments.map((a) => `\`${a}\``).join(", ")}\n` : "",
+      "Change only what this request asks. Work that is already merged stays as it is unless the request says otherwise.",
+    ].join("\n");
+  }
+
+  /** The owner asks for a change at any point after the PRD was first approved. */
+  async requestChange(text: string, attachments: { name: string; data: string }[] = []): Promise<ChangeRequest> {
+    const prdApproved = this.svc.db.get("SELECT id FROM approvals WHERE gate = 'prd' AND decision = 'approved' LIMIT 1");
+    if (!prdApproved) throw new Error("changes can be requested once the PRD has been approved; before that, comment on the PRD instead");
+    const active = this.activeChange();
+    if (active) throw new Error(`${active.id} is still in progress (${active.status}); finish or cancel it first`);
+    if (!text.trim()) throw new Error("describe the change");
+    const id = formatId("CR", this.svc.db.next("CR"), 3);
+    const dir = path.join(this.p.paths.attachments, id);
+    const files = this.saveAttachments(dir, attachments).map((n) => path.join(dir, n));
+    const now = new Date().toISOString();
+    const cr: ChangeRequest = { id, text: text.trim(), status: "pm", created_at: now, updated_at: now, attachments: files };
+    this.svc.patchState({ changes: [...this.changes(), cr] });
+    this.svc.emit("change.requested", `Owner requested a change (${id}): ${cr.text.slice(0, 140)}`, { id }, { actor: "human" });
+    this.createPlanningTask("pm", "change", { body: this.changeBody(cr), changeId: id });
+    void this.tick();
+    return cr;
+  }
+
+  cancelChange(id: string): void {
+    const ch = this.changes().find((c) => c.id === id);
+    if (!ch) throw new Error(`unknown change ${id}`);
+    if (!["pm", "prd_review", "replan", "plan_review"].includes(ch.status)) throw new Error(`${id} is already ${ch.status}`);
+    this.setChange(id, "cancelled");
+    for (const t of this.svc.tasks({ kind: ["planning"] })) {
+      if (t.meta.changeId === id && t.status !== "done") this.svc.setStatus(t.id, "done", { force: true, reason: `${id} cancelled` });
+    }
+    // Tasks imported for this change but never approved are dropped.
+    for (const t of this.svc.tasks({ kind: ["build"] })) {
+      if (t.hold === "plan" && t.status === "todo") {
+        this.svc.db.run("DELETE FROM tasks WHERE id = ?", t.id);
+        this.svc.db.run("DELETE FROM task_deps WHERE task = ?", t.id);
+      }
+    }
+  }
+
+  /** New work after the release review: back to the build, with fresh release checks later. */
+  private reopenBuild(): void {
+    for (const t of this.svc.tasks({ kind: ["release"] })) {
+      if (t.status !== "done") this.svc.setStatus(t.id, "done", { force: true, reason: "superseded by a change request", extra: { hold: "superseded" } });
+    }
+    if (this.svc.doc("release")) this.svc.setDocStatus("release", "draft", "superseded by a change request", "orchestrator");
+    this.svc.setPhase("build");
+  }
+
   // ---------------------------------------------------------------------------------- questions
 
   /** An answer arrived (owner in the dashboard, or a teammate's `botss reply`). */
@@ -970,18 +1094,13 @@ export class Orchestrator {
         this.createPlanningTask("pm", "draft", {
           resume: {
             session: q.session_id ?? t.session_id ?? crypto.randomUUID(),
-            prompt: `The owner answered your discovery questions (${q.id}):\n\n${answerText}\n\nNow switch to mode draft: write \`.botss/docs/prd.md\` and \`botss doc submit prd\`.`,
+            prompt: `The owner answered your discovery questions (${q.id}):\n\n${answerText}\n\nNow switch to mode draft: write \`.botss/docs/prd.md\` and \`botss doc submit prd\`. Include only what the idea and these answers ask for.`,
           },
         });
       } else if (t.mode === "direction") {
         this.svc.patchState({ designChoice: answerText });
         this.svc.recordApproval("design_direction", null, null, "approved", answerText.slice(0, 500));
-        this.svc.emit(
-          "design.direction",
-          "Owner picked a design direction",
-          { choice: answerText.slice(0, 500) },
-          { actor: q.answered_by },
-        );
+        this.svc.emit("design.direction", "Owner picked a design direction", { choice: answerText.slice(0, 500) }, { actor: q.answered_by });
         this.svc.setPhase("design");
         this.createPlanningTask("designer", "system", {
           resume: {
@@ -992,10 +1111,8 @@ export class Orchestrator {
       } else if (q.session_id) {
         // A planning agent asked something mid-run: rerun its mode on the same session with the answer.
         this.createPlanningTask(t.role, t.mode as RunMode, {
-          resume: {
-            session: q.session_id,
-            prompt: `Answer to your question ${q.message_id}:\n\n${answerText}\n\nContinue in mode ${t.mode}.`,
-          },
+          resume: { session: q.session_id, prompt: `Answer to your question ${q.message_id}:\n\n${answerText}\n\nContinue in mode ${t.mode}.` },
+          changeId: t.meta.changeId as string | undefined,
         });
       }
     } else if (t && t.status === "blocked") {
@@ -1007,10 +1124,7 @@ export class Orchestrator {
       });
       if (q.session_id) {
         this.svc.patchMeta(t.id, {
-          resume: {
-            session: q.session_id,
-            prompt: `Your question ${q.message_id} was answered by ${q.answered_by}:\n\n${answerText}\n\nContinue the task.`,
-          },
+          resume: { session: q.session_id, prompt: `Your question ${q.message_id} was answered by ${q.answered_by}:\n\n${answerText}\n\nContinue the task.` },
           resumeStatus: undefined,
         });
       }
@@ -1018,18 +1132,24 @@ export class Orchestrator {
     void this.tick();
   }
 
-  /** Route a question to a teammate role: an answer task for that role. */
-  routeQuestion(q: {
-    id: string;
-    messageId: string;
-    to: string;
-    body: string;
-    from: string;
-    task: string | null;
-  }): void {
+  private isBusy(taskId: string): boolean {
+    return [...this.active.values()].some((r) => r.task === taskId) || this.finalizing.has(taskId);
+  }
+
+  /** Route a question to a teammate role. Questions to the same role are batched into one waiting answer
+   * task, so one run answers several questions instead of paying for a run each. */
+  routeQuestion(q: { id: string; messageId: string; to: string; body: string; from: string; task: string | null }): void {
     const target = q.to.replace(/^@/, "");
     const role = (this.p.roles.roles[target] ? target : target.replace(/-\d+$/, "")) as Role;
     if (!this.p.roles.roles[role]) return;
+    const block = `## Question ${q.messageId} from ${q.from}${q.task ? ` (task ${q.task})` : ""}\n\n${q.body}\n\nReply with: \`botss reply ${q.messageId} "<answer>"\``;
+    const waiting = this.svc.tasks({ kind: ["answer"], role }).find((t) => t.status === "ready" && !t.worktree && !this.isBusy(t.id));
+    if (waiting) {
+      const list = [...((waiting.meta.answersList as string[] | undefined) ?? [waiting.meta.answers!]), q.messageId];
+      this.svc.updateTask(waiting.id, { body: `${waiting.body}\n\n${block}`, title: `Answer ${list.length} questions` });
+      this.svc.patchMeta(waiting.id, { answersList: list });
+      return;
+    }
     const id = this.svc.nextId("A");
     this.svc.createTask({
       id,
@@ -1039,33 +1159,30 @@ export class Orchestrator {
       role,
       status: "ready",
       priority: 1,
-      body: `## Question ${q.messageId} from ${q.from}${q.task ? ` (task ${q.task})` : ""}\n\n${q.body}\n\nReply with: \`botss reply ${q.messageId} "<answer>"\``,
-      meta: { answers: q.messageId },
+      body: block,
+      meta: { answers: q.messageId, answersList: [q.messageId] },
     });
   }
 
   private async afterAnswerRun(t: TaskRow, run: ActiveRun, ok: boolean): Promise<void> {
-    const q = t.meta.answers ? this.svc.question(t.meta.answers) : null;
-    const answered = q?.status === "answered";
+    const ids = (t.meta.answersList as string[] | undefined) ?? (t.meta.answers ? [t.meta.answers] : []);
+    const open = ids.filter((id) => this.svc.question(id)?.status !== "answered");
     if (t.worktree) {
       // Answer during the build: merge contract/doc changes like a task.
-      if (answered) {
+      await commitAll(t.worktree, `botss: answers by ${run.agent}`, ["-A", "--", ".botss/docs"]).catch(() => false);
+      if (!open.length) {
+        this.svc.setStatus(t.id, "review", { force: true, reason: "answered; merging" });
         await this.queueMerge(t.id);
         return;
       }
     } else {
-      await this.commitIntegration(`botss: answer ${t.meta.answers ?? ""} (${run.agent})`);
-      if (answered) {
+      await this.commitIntegration(`botss: answers by ${run.agent}`);
+      if (!open.length) {
         this.svc.setStatus(t.id, "done", { force: true, reason: "answered" });
         return;
       }
     }
-    this.failRun(
-      t,
-      run,
-      ok ? "run ended without `botss reply`" : "run failed",
-      `You have not replied yet. Reply with \`botss reply ${t.meta.answers} "..."\`.`,
-    );
+    this.failRun(t, run, ok ? "run ended without `botss reply`" : "run failed", `You have not replied to ${open.join(", ")} yet. Reply with \`botss reply <id> "..."\`.`);
   }
 
   // ------------------------------------------------------------------------------------- merging
@@ -1246,33 +1363,38 @@ export class Orchestrator {
       this.svc.updateTask(t.id, { worktree: null });
     }
     if ((t.id === "T000" || t.id === "T001") && t.kind === "build") this.captureChecks(t);
+    if (t.kind === "planning") await this.onPlanningDone(t, t.session_id ?? "");
     await this.maybeAdvanceAfterBuild();
   }
 
-  /** Check commands from the T000/T001 handoffs ("## Checks" section, one command per line). */
+  /** Check commands from the T000/T001 handoffs (a "## Checks" section, one command per line). */
   captureChecks(t: TaskRow): void {
     const h = this.svc.handoffs(t.id).at(-1)?.content ?? "";
-    const m = /^##+\s*Checks\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/im.exec(h);
+    if (!this.captureChecksFrom(h, t.id) && t.id === "T000" && t.verify) this.addChecks([t.verify], t.id);
+  }
+
+  /** Returns true when the text had a Checks section. */
+  captureChecksFrom(text: string, source: string): boolean {
+    const lines = text.split(/\r?\n/);
+    const at = lines.findIndex((l) => /^#{2,}\s*Checks\s*$/i.test(l.trim()));
+    if (at < 0) return false;
     const found: string[] = [];
-    if (m) {
-      for (const raw of m[1]!.split("\n")) {
-        const line = raw
-          .trim()
-          .replace(/^[-*]\s+/, "")
-          .replace(/^`+|`+$/g, "")
-          .trim();
-        if (!line || line.startsWith("```") || line.startsWith("#")) continue;
-        found.push(line);
-      }
+    for (const raw of lines.slice(at + 1)) {
+      if (/^#{1,2}\s/.test(raw)) break;
+      const line = raw.trim().replace(/^[-*]\s+/, "").replace(/^`+|`+$/g, "").trim();
+      if (!line || line.startsWith("```") || line.startsWith("#")) continue;
+      found.push(line);
     }
-    if (!found.length && t.id === "T000" && t.verify) found.push(t.verify);
+    this.addChecks(found, source);
+    return true;
+  }
+
+  private addChecks(found: string[], source: string): void {
     const cur = this.svc.settings.checks;
     const next = [...cur, ...found.filter((c) => !cur.includes(c))];
     if (next.length !== cur.length) {
       this.svc.updateSettings({ checks: next }, "orchestrator");
-      this.svc.emit("project.checks", `Integration checks set from ${t.id}: ${found.join(" ; ")}`, {
-        checks: next,
-      });
+      this.svc.emit("project.checks", `Integration checks set from ${source}: ${found.join(" ; ")}`, { checks: next });
     }
   }
 
@@ -1289,8 +1411,15 @@ export class Orchestrator {
   private async enterRelease(): Promise<void> {
     this.svc.setPhase("release_review");
     const verify = this.svc.settings.checks.join(" && ") || "true";
+    // A change request can reopen the build after a release review; each round gets fresh release tasks.
+    const relId = (base: string) => {
+      if (!this.svc.task(base)) return base;
+      let n = 2;
+      while (this.svc.task(`${base}-${n}`)) n++;
+      return `${base}-${n}`;
+    };
     this.svc.createTask({
-      id: "REL-QA",
+      id: relId("REL-QA"),
       kind: "release",
       mode: "release",
       title: "Release QA on the merged branch",
@@ -1303,7 +1432,7 @@ export class Orchestrator {
     });
     if (this.svc.settings.security_audit) {
       this.svc.createTask({
-        id: "REL-SEC",
+        id: relId("REL-SEC"),
         kind: "release",
         mode: "audit",
         title: "Pre-release security audit",

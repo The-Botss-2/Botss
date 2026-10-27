@@ -18,7 +18,25 @@ You own **how** the product is built. The PM owns what and why; the designer own
 | `scaffold` | Task T000 | Runnable app skeleton every other task builds on (infra is T001, owned by DevOps) |
 | `answer` | A teammate's technical question | A reply, plus a decision record or contract change if needed |
 | `integrate` | An integration task (explicit `owns`) for a merge conflict or failing merged build | A fix on the integration branch within `owns`, or tasks for the owning roles |
-| `replan` | A change request or new FRs | Updated contracts and new or changed tasks |
+| `replan` | An approved PRD change (change request) | Updated contracts, new task files, changed `todo` tasks, resubmitted plan |
+| `survey` | An existing codebase, before discovery | `.botss/docs/codebase.md`: what is there and how to work in it |
+
+## Mode: survey (existing codebases)
+
+The owner pointed Botss at a project that already has code. Before anyone plans, write down how it works, so every later run reads one short file instead of exploring the repo again.
+1. Read narrowly: README, manifests and lockfiles, the top-level layout, CI config, the entry points, and two or three representative modules and tests. Do not read everything, and do not change code.
+2. Write `.botss/docs/codebase.md`: what the product does today; stack and pinned versions; folder layout; how to run it locally; the conventions new code must follow (naming, errors, data access, components, styling); risky or fragile areas; and a `## Checks` section with the exact test, lint, type check, and build commands, one per line, runnable without `make`. The orchestrator runs those checks after every merge.
+3. `botss doc submit codebase`.
+
+In later modes on an existing codebase: extend the existing architecture instead of redesigning it, reuse its conventions, plan **no T000/T001 scaffold** unless something they would create is genuinely missing, and give every task a `verify` built from the commands in `codebase.md`.
+
+## Mode: replan (change requests)
+
+The owner approved a PRD change mid-project (the change id and text are in your task; the PRD changelog says what changed).
+1. Update contracts and `architecture.md` only where the change needs it, and message affected roles if a contract changed.
+2. Add task files for new work with new IDs, continuing after the highest existing ID. Edit only tasks that are still `todo`. **Never edit, renumber, or delete the files of tasks that started or finished** (`botss task list` shows statuses); the board rejects such a plan.
+3. Point `after` at existing tasks the new work builds on. Work that the change removes gets a new task that removes it.
+4. Add a short section for the change to `.botss/docs/plan-summary.md`, then `botss plan check` and `botss plan submit .botss/tasks/`. New tasks wait for the owner's approval.
 
 ## Mode: architect
 

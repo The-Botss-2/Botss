@@ -1,6 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 import { flag, type Parsed } from "./args.ts";
 import { CliError, connect, findProjectRoot, projectIdFor, readServerInfo, request } from "./client.ts";
 
@@ -103,6 +106,8 @@ async function init(p: Parsed): Promise<number> {
   console.log(`${r.alreadyInitialized ? "Botss project already initialized" : "Initialized Botss project"}: ${r.root}`);
   for (const c of r.created) console.log(`  + ${c}`);
   console.log(`  integration worktree: ${r.integration}`);
+  if (r.existing) console.log("  existing code found: the tech lead will survey it first, and the team changes only what you ask.");
+  for (const w of r.warnings) console.log(`  ! ${w}`);
   const checks = await doctorChecks();
   const missing = checks.filter((c) => !c.ok && !c.optional);
   if (missing.length) {
@@ -123,8 +128,13 @@ async function init(p: Parsed): Promise<number> {
 }
 
 function openBrowser(url: string): void {
+  // rundll32 avoids cmd.exe, which would mangle %XX escapes and & in the URL.
   const [cmd, args] =
-    process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+    process.platform === "win32"
+      ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+      : process.platform === "darwin"
+        ? ["open", [url]]
+        : ["xdg-open", [url]];
   try {
     spawn(cmd as string, args as string[], { stdio: "ignore", detached: true, windowsHide: true }).unref();
   } catch {
@@ -141,32 +151,37 @@ async function alive(url: string): Promise<boolean> {
   }
 }
 
+/** Dashboard route for the folder `botss up` runs in: the project itself, or the folder picker opened there. */
+async function routeFor(dir: string, root: string | null): Promise<string> {
+  return root ? `#/p/${await projectIdFor(root)}` : `#/open?path=${encodeURIComponent(dir)}`;
+}
+
 async function up(p: Parsed): Promise<number> {
-  const root = findProjectRoot();
+  const cwd = path.resolve(p.positional[1] ?? ".");
+  const root = findProjectRoot(cwd);
   const existing = readServerInfo();
   if (existing && (await alive(existing.url))) {
-    if (root) await request({ url: existing.url, token: existing.token, project: null, agent: false }, "POST", "/api/projects", { root }).catch(() => {});
-    const link = `${existing.url}/?token=${existing.token}${root ? `#/p/${await projectIdFor(root)}` : ""}`;
-    console.log(`Botss is already running: ${link}`);
+    const conn = { url: existing.url, token: existing.token, project: null, agent: false };
+    if (root) await request(conn, "POST", "/api/projects", { root }).catch(() => {});
+    await request(conn, "POST", "/api/launch", { dir: root ?? cwd }).catch(() => {});
+    const link = `${existing.url}/?token=${existing.token}${await routeFor(cwd, root)}`;
+    console.log(`Botss is already running. ${root ? `Opening ${root}` : `Choose where to put your project (starting at ${cwd})`}:\n\n  ${link}\n`);
     if (!p.flags["no-open"]) openBrowser(link);
     return 0;
   }
   const { BotssServer } = await import("@botss/server");
   const want = Number(flag(p, "port") ?? process.env.BOTSS_PORT ?? 4800);
-  const server = new BotssServer({ port: want, openRegistered: true });
+  const server = new BotssServer({ port: want, openRegistered: true, launchDir: root ?? cwd });
   try {
     await server.start();
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "EADDRINUSE") throw new CliError(`port ${want} is in use. Try \`botss up --port ${want + 1}\`.`, 2);
     throw e;
   }
-  let projectHash = "";
-  if (root) {
-    const proj = await server.openProject(root);
-    projectHash = `#/p/${proj.id}`;
-  }
-  const link = `${server.url}/?token=${server.tokens.master}${projectHash}`;
-  console.log(`\nBotss is running on 127.0.0.1 only.\n\n  Dashboard: ${link}\n\nKeep this terminal open. Ctrl+C stops Botss and every agent.\n`);
+  if (root) await server.openProject(root);
+  const link = `${server.url}/?token=${server.tokens.master}${await routeFor(cwd, root)}`;
+  const what = root ? `Project: ${root}` : `This folder is not a Botss project yet; the dashboard lets you pick or create one (starting at ${cwd}).`;
+  console.log(`\nBotss is running on 127.0.0.1 only.\n\n  Dashboard: ${link}\n  ${what}\n\nKeep this terminal open. Ctrl+C stops Botss and every agent.\n`);
   if (!p.flags["no-open"]) openBrowser(link);
   const shutdown = async () => {
     console.log("\nStopping Botss (agents are stopped too)...");
@@ -176,6 +191,65 @@ async function up(p: Parsed): Promise<number> {
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
   await new Promise(() => {});
+  return 0;
+}
+
+const LAUNCHER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "botss.js");
+
+function onPath(dir: string): boolean {
+  const norm = (d: string) => path.resolve(d).toLowerCase().replace(/[\\/]+$/, "");
+  return (process.env.PATH ?? "").split(path.delimiter).filter(Boolean).some((d) => norm(d) === norm(dir));
+}
+
+/** Install a `botss` command usable from any folder: a small launcher that runs this checkout's CLI. */
+async function setup(p: Parsed): Promise<number> {
+  const node = process.execPath;
+  const remove = Boolean(p.flags.uninstall);
+  if (process.platform === "win32") {
+    const dir = path.join(os.homedir(), ".botss", "bin");
+    const cmdFile = path.join(dir, "botss.cmd");
+    const shFile = path.join(dir, "botss");
+    if (remove) {
+      fs.rmSync(cmdFile, { force: true });
+      fs.rmSync(shFile, { force: true });
+      console.log(`Removed ${cmdFile}. (${dir} stays on your PATH; remove it in System Settings if you like.)`);
+      return 0;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cmdFile, `@echo off\r\n"${node}" "${LAUNCHER}" %*\r\n`);
+    // Git Bash (which Claude Code uses on Windows) runs extensionless scripts.
+    fs.writeFileSync(shFile, `#!/bin/sh\nexec "${node.replace(/\\/g, "/")}" "${LAUNCHER.replace(/\\/g, "/")}" "$@"\n`);
+    // Add the folder to the *user* PATH (no admin rights, no truncation like setx).
+    const ps = (script: string) => spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true });
+    const cur = ps("[Environment]::GetEnvironmentVariable('Path','User')").stdout.trim();
+    const parts = cur.split(";").filter(Boolean);
+    if (!parts.some((x) => path.resolve(x).toLowerCase() === dir.toLowerCase())) {
+      const next = [...parts, dir].join(";").replace(/'/g, "''");
+      const r = ps(`[Environment]::SetEnvironmentVariable('Path','${next}','User')`);
+      if (r.status !== 0) {
+        console.log(`Installed ${cmdFile}, but could not update PATH automatically. Add this folder to your user PATH:\n  ${dir}`);
+        return 1;
+      }
+      console.log(`Added ${dir} to your user PATH.`);
+    }
+    console.log(`Installed the botss command (${cmdFile}).\n\nOpen a NEW terminal, then from any folder:\n  botss init      make this folder a Botss project\n  botss up        start Botss and open the dashboard here`);
+    return 0;
+  }
+  const dir = path.join(os.homedir(), ".local", "bin");
+  const file = path.join(dir, "botss");
+  if (remove) {
+    fs.rmSync(file, { force: true });
+    console.log(`Removed ${file}.`);
+    return 0;
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, `#!/bin/sh\nexec "${node}" "${LAUNCHER}" "$@"\n`, { mode: 0o755 });
+  console.log(`Installed the botss command (${file}).`);
+  if (!onPath(dir)) {
+    const shell = path.basename(process.env.SHELL ?? "bash");
+    console.log(`\n${dir} is not on your PATH yet. Add this line to ~/.${shell === "zsh" ? "zshrc" : "bashrc"} and open a new terminal:\n  export PATH="$HOME/.local/bin:$PATH"`);
+  }
+  console.log(`\nFrom any folder:\n  botss init      make this folder a Botss project\n  botss up        start Botss and open the dashboard here`);
   return 0;
 }
 
@@ -232,6 +306,8 @@ async function logs(p: Parsed): Promise<number> {
 
 export async function run(group: string, p: Parsed): Promise<number> {
   switch (group) {
+    case "setup":
+      return setup(p);
     case "init":
       return init(p);
     case "doctor":

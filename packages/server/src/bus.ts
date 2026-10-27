@@ -42,6 +42,7 @@ export function topicsFor(type: string): string[] {
     idea: ["project", "docs"],
     preview: ["project"],
     skills: ["skills"],
+    change: ["project", "docs", "changes", "tasks"],
   };
   return map[head] ?? ["project"];
 }

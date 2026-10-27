@@ -17,6 +17,7 @@ export interface ServerOptions {
   /** Always 127.0.0.1. Exposed for tests only; anything else is refused. */
   host?: "127.0.0.1";
   token?: string;
+  launchDir?: string;
   runnerFactory?: () => AgentRunner;
   /** Open every registered project at startup. */
   openRegistered?: boolean;
@@ -31,10 +32,13 @@ export class BotssServer {
   readonly projects = new Map<string, Project>();
   app!: FastifyInstance;
   port = 0;
+  /** The folder `botss up` was started from (or last opened from the CLI); the dashboard offers to open it. */
+  launchDir: string | null = null;
 
   private readonly opts: ServerOptions;
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
+    this.launchDir = opts.launchDir ?? null;
     this.tokens = new TokenStore(opts.token);
   }
 

@@ -23,6 +23,7 @@ function need(v: string | undefined, usage: string): string {
 const STANDARD_PATHS: Record<string, string> = {
   prd: ".botss/docs/prd.md",
   architecture: ".botss/docs/architecture.md",
+  codebase: ".botss/docs/codebase.md",
   design: ".botss/docs/design/DESIGN.md",
   plan: ".botss/docs/plan-summary.md",
 };

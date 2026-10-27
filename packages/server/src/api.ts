@@ -1,6 +1,7 @@
-import { estimateBuild, GATES, planStats, quotaCheck, settingsSchema, type Gate, type Identity } from "@botss/core";
+import { estimateBuild, GATES, parseStreamLine, planStats, quotaCheck, settingsSchema, type Gate, type Identity } from "@botss/core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type { CmdResult } from "./commands.ts";
@@ -85,9 +86,87 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
     "/api/projects",
     wrap(async (req) => {
       human(req);
-      const body = z.object({ root: z.string().min(1), init: z.boolean().optional() }).parse(req.body);
-      const p = await srv.openProject(body.root, { init: body.init });
+      const body = z.object({ root: z.string().min(1), init: z.boolean().optional(), existing: z.boolean().optional() }).parse(req.body);
+      if (!path.isAbsolute(body.root)) throw new ServiceError("choose an absolute folder path", 2);
+      const p = await srv.openProject(path.resolve(body.root), { init: body.init });
+      if (body.existing !== undefined && p.svc.phase === "idea") p.svc.updateSettings({ existing: body.existing });
       return { id: p.id, name: p.paths.name, root: p.paths.root };
+    }),
+  );
+
+  // --------------------------------------------------------------------- folder picker (owner only)
+  // The owner picks where Botss puts a project. Directories only; nothing is read from files.
+  app.get(
+    "/api/fs/home",
+    wrap((req) => {
+      human(req);
+      const roots =
+        process.platform === "win32"
+          ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((l) => `${l}:\\`).filter((d) => fs.existsSync(d))
+          : ["/"];
+      const launch = srv.launchDir;
+      return {
+        home: os.homedir(),
+        sep: path.sep,
+        roots,
+        launchDir: launch,
+        launchIsProject: Boolean(launch && fs.existsSync(path.join(launch, ".botss", "config.yaml"))),
+      };
+    }),
+  );
+  app.get(
+    "/api/fs/list",
+    wrap((req) => {
+      human(req);
+      const raw = String((req.query as { path?: string }).path ?? "") || os.homedir();
+      if (!path.isAbsolute(raw)) throw new ServiceError("path must be absolute", 2);
+      const dir = path.resolve(raw);
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new ServiceError(`not a folder: ${dir}`, 404);
+      let names: fs.Dirent[];
+      try {
+        names = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        throw new ServiceError(`cannot read ${dir}`, 3);
+      }
+      const entries = names
+        .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !e.name.startsWith("$") && e.name !== "node_modules")
+        .map((e) => {
+          const full = path.join(dir, e.name);
+          let hasFiles = false;
+          try {
+            hasFiles = fs.readdirSync(full).some((n) => !n.startsWith("."));
+          } catch {
+            /* unreadable */
+          }
+          return { name: e.name, path: full, isBotss: fs.existsSync(path.join(full, ".botss", "config.yaml")), isGit: fs.existsSync(path.join(full, ".git")), hasFiles };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+      const parent = path.dirname(dir);
+      return { path: dir, parent: parent === dir ? null : parent, entries, isBotss: fs.existsSync(path.join(dir, ".botss", "config.yaml")), hasFiles: names.some((n) => !n.name.startsWith(".")) };
+    }),
+  );
+  app.post(
+    "/api/fs/mkdir",
+    wrap((req) => {
+      human(req);
+      const target = z.object({ path: z.string().min(1) }).parse(req.body).path;
+      if (!path.isAbsolute(target)) throw new ServiceError("path must be absolute", 2);
+      const full = path.resolve(target);
+      const name = path.basename(full);
+      if (!name || /[<>:"|?*]/.test(name) || name.startsWith(".")) throw new ServiceError("choose a plain folder name", 2);
+      if (!fs.existsSync(path.dirname(full))) throw new ServiceError("the parent folder does not exist", 2);
+      if (fs.existsSync(full)) throw new ServiceError("that folder already exists", 409);
+      fs.mkdirSync(full);
+      return { path: full };
+    }),
+  );
+  app.post(
+    "/api/launch",
+    wrap((req) => {
+      human(req);
+      const dir = z.object({ dir: z.string().min(1) }).parse(req.body).dir;
+      srv.launchDir = path.resolve(dir);
+      return { ok: true };
     }),
   );
 
@@ -226,6 +305,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
         activeRuns: p.orch.activeRuns().length,
         openQuestions: p.svc.questions("open").filter((q) => q.to_addr === "@human").length,
         previewUrl: p.orch.previewUrl(),
+        activeChange: p.orch.activeChange(),
         roles: p.roles.roles,
         defaultStack: p.roles.default_stack,
       };
@@ -253,9 +333,35 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
           stakes: z.string().max(200).optional(),
           links: z.array(z.string().max(2000)).max(50).optional(),
           attachments: z.array(z.object({ name: z.string().max(200), data: z.string().max(14_000_000) })).max(20).optional(),
+          kind: z.enum(["new", "feature", "fix"]).optional(),
         })
         .parse(req.body);
       await p.orch.submitIdea(b);
+      return { ok: true };
+    }),
+  );
+
+  // ------------------------------------------------------------------------- change requests
+  app.get("/api/projects/:pid/changes", wrap((req) => (human(req), project(req).orch.changes())));
+  app.post(
+    "/api/projects/:pid/changes",
+    wrap(async (req) => {
+      human(req);
+      const b = z
+        .object({
+          text: z.string().min(3).max(20_000),
+          attachments: z.array(z.object({ name: z.string().max(200), data: z.string().max(14_000_000) })).max(10).optional(),
+        })
+        .parse(req.body);
+      const cr = await project(req).orch.requestChange(b.text, b.attachments ?? []);
+      return { id: cr.id };
+    }),
+  );
+  app.post(
+    "/api/projects/:pid/changes/:cid/cancel",
+    wrap((req) => {
+      human(req);
+      project(req).orch.cancelChange((req.params as { cid: string }).cid);
       return { ok: true };
     }),
   );
@@ -434,6 +540,31 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
     }),
   );
   app.get(
+    "/api/projects/:pid/runs/:rid/transcript",
+    wrap((req) => {
+      human(req);
+      const p = project(req);
+      const rid = (req.params as { rid: string }).rid;
+      if (!/^R-\d+$/.test(rid)) throw new ServiceError("bad run id", 2);
+      const run = p.svc.run(rid);
+      if (!run) throw new ServiceError("unknown run", 404);
+      const f = path.join(p.paths.run(rid), "stream.jsonl");
+      const items: Record<string, unknown>[] = [];
+      if (fs.existsSync(f)) {
+        for (const line of fs.readFileSync(f, "utf8").split("\n")) {
+          for (const ev of parseStreamLine(line)) {
+            if (ev.kind === "init") items.push({ kind: "init", text: ev.model ?? "" });
+            else if (ev.kind === "text") items.push({ kind: "text", text: ev.text });
+            else if (ev.kind === "tool") items.push({ kind: "tool", tool: ev.tool, file: ev.file ?? null, input: ev.input, toolUseId: ev.toolUseId ?? null, text: ev.summary });
+            else if (ev.kind === "tool_result") items.push({ kind: "result", toolUseId: ev.toolUseId ?? null, isError: ev.isError, text: ev.text });
+            else if (ev.kind === "result") items.push({ kind: "final", isError: ev.isError, text: ev.text });
+          }
+        }
+      }
+      return { run, items: items.slice(-1500) };
+    }),
+  );
+  app.get(
     "/api/projects/:pid/events",
     wrap((req) => {
       human(req);
@@ -524,7 +655,9 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
         tokens = null;
       }
       const directions = p.svc.questions().filter((q) => q.kind === "batch" && p.svc.task(q.task ?? "")?.mode === "direction");
-      return { choice: p.svc.state.designChoice ?? null, directions, tokens, screens };
+      const dirsDir = path.join(base, "design/directions");
+      const directionPreviews = fs.existsSync(dirsDir) ? fs.readdirSync(dirsDir).filter((f) => /\.html$/.test(f)).sort() : [];
+      return { choice: p.svc.state.designChoice ?? null, directions, tokens, screens, directionPreviews };
     }),
   );
   app.get(
@@ -532,9 +665,11 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
     wrap((req, reply) => {
       human(req);
       const p = project(req);
-      const name = (req.query as { name?: string }).name ?? "";
+      const q = req.query as { name?: string; dir?: string };
+      const name = q.name ?? "";
       if (!/^[A-Za-z0-9._-]+\.(html|md)$/.test(name)) throw new ServiceError("bad screen name", 2);
-      const f = safeJoin(path.join(p.paths.integration, ".botss/docs/design/screens"), name);
+      const sub = q.dir === "directions" ? "directions" : "screens";
+      const f = safeJoin(path.join(p.paths.integration, ".botss/docs/design", sub), name);
       if (!f || !fs.existsSync(f)) throw new ServiceError("not found", 404);
       // Served as text and rendered by the dashboard in a sandboxed iframe (srcdoc, no allow-same-origin).
       return reply.header("content-type", "text/plain; charset=utf-8").header("content-security-policy", "sandbox").send(fs.readFileSync(f, "utf8"));

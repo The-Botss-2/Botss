@@ -35,6 +35,7 @@ const STANDARD_DOCS: Record<string, string> = {
   design: ".botss/docs/design/DESIGN.md",
   plan: ".botss/docs/plan-summary.md",
   idea: ".botss/docs/idea.md",
+  codebase: ".botss/docs/codebase.md",
   release: ".botss/docs/release.md",
 };
 
@@ -46,7 +47,18 @@ export function docPath(name: string): string {
   throw new ServiceError(`unknown document "${name}". Known: prd, architecture, contracts/<file>, design, plan, decisions/<id>`, 2);
 }
 
-const ASK_NOTICE = "Question posted. Your task is paused. Finish your run now with a one-line summary; you will be resumed with the answer.";
+/** Messages are read by other agents (and paid for in their context). Detail belongs in a file. */
+const MAX_MESSAGE = 2000;
+function checkLength(body: string, what: string): void {
+  if (body.length > MAX_MESSAGE) {
+    throw new ServiceError(
+      `${what} is ${body.length} characters; the limit is ${MAX_MESSAGE}. Put the detail in a file (a contract, a decision, or .botss/reviews/<name>.md) and send its path in a short message.`,
+      2,
+    );
+  }
+}
+
+const ASK_NOTICE ="Question posted. Your task is paused. Finish your run now with a one-line summary; you will be resumed with the answer.";
 
 export class Commands {
   private readonly p: Project;
@@ -270,6 +282,7 @@ export class Commands {
     this.must(id, "msg");
     this.checkAddress(to);
     if (!body.trim()) throw new ServiceError("message is empty", 2);
+    checkLength(body, "the message");
     const m = this.svc.message(this.actor(id), to, body, "msg", { task: this.runTask(id) });
     return { text: `${m.id} sent to ${to}`, data: { id: m.id } };
   }
@@ -296,6 +309,7 @@ export class Commands {
       return { text: ASK_NOTICE, data: r };
     }
     if (!body?.trim()) throw new ServiceError("question is empty", 2);
+    checkLength(body, "the question");
     const r = this.blockWithQuestion(id, t, to, body, "ask");
     return { text: `${r.message}: ${ASK_NOTICE}`, data: r };
   }
@@ -315,6 +329,7 @@ export class Commands {
   async reply(id: Identity, msgId: string, body: string): Promise<CmdResult> {
     this.must(id, "reply");
     if (!body.trim()) throw new ServiceError("reply is empty", 2);
+    checkLength(body, "the reply");
     const orig = this.svc.db.get("SELECT * FROM messages WHERE id = ?", msgId);
     if (!orig) throw new ServiceError(`unknown message ${msgId}`, 2);
     const m = this.svc.message(this.actor(id), `@${orig.from_agent}`, body, "reply", { replyTo: msgId, task: orig.task });
@@ -421,7 +436,8 @@ export class Commands {
     if (check.exit) return { ...check, text: `${check.text}\nNot imported. Fix the problems and run \`botss plan submit\` again.` };
     const r = checkPlan(files, await lsFiles(this.p.paths.integration));
     const a = this.actor(id);
-    this.svc.importPlan(r.tasks, a.agent);
+    // During a change request the new plan waits for the owner's approval before anything new starts.
+    this.svc.importPlan(r.tasks, a.agent, this.p.orch.activeChange()?.status === "replan" ? "plan" : null);
     const stats = planStats(r.tasks);
     const list = r.tasks.map((t) => `| ${t.id} | ${t.title.replace(/\|/g, "/")} | ${t.role} | ${t.size} | ${t.after.join(", ") || "-"} |`).join("\n");
     const content = `${summary?.trim() || "# Plan summary"}\n\n## Tasks (validated)\n\n| ID | Title | Role | Size | After |\n|---|---|---|---|---|\n${list}\n\nCritical path: ${stats.criticalPath.join(" → ")}. Peak parallel lanes: ${stats.peakLanes}.\n`;

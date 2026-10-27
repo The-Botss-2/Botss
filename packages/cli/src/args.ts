@@ -4,7 +4,7 @@ export interface Parsed {
 }
 
 /** Flags that never take a value. Everything else after `--name` consumes the next word. */
-const BOOLEAN_FLAGS = new Set(["json", "ready", "all", "help", "no-open", "follow", "f", "login", "yes", "force"]);
+const BOOLEAN_FLAGS = new Set(["json", "ready", "all", "help", "no-open", "follow", "f", "login", "yes", "force", "uninstall"]);
 
 export function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];

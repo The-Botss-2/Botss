@@ -11,15 +11,11 @@ Explain each step in one or two sentences before you run it. **Ask before instal
    * Docker with Compose and `uv` are needed by the apps Botss builds (per-agent databases, Python backend), not by Botss itself. They can be installed later.
    * Claude Code must be installed and logged in (`claude` once, interactively, by the user). `botss doctor --login` checks the login with one tiny prompt and asks first.
 2. **Install and build:** `pnpm install && pnpm build` (or `corepack pnpm install && corepack pnpm build`). This installs dependencies and builds the dashboard. Nothing else needs compiling, because Node runs the TypeScript directly.
-3. **Make `botss` available.** Offer the options and let the user choose:
-   * macOS / Linux: an alias `alias botss="node <repo>/packages/cli/bin/botss.js"` in `~/.zshrc` or `~/.bashrc` (only if they agree to editing their profile), or
-   * Windows PowerShell: a function `function botss { node "<repo>\packages\cli\bin\botss.js" @args }` in `$PROFILE` (same), or
-   * no profile change: run `node <repo>/packages/cli/bin/botss.js <command>` directly.
-   Do not use `npm link`: the workspace's `workspace:*` dependencies are pnpm-only.
-4. **Initialize their project:** ask which folder the app should live in (new or existing), then `botss init <folder>`. This creates `.botss/`, copies the skills, and creates the `botss/integration` branch and its worktree next to the folder (`../.botss-worktrees/`). The user's current branch is never modified.
-5. **Start Botss:** `cd <folder> && botss up`. It prints and opens `http://127.0.0.1:4800/?token=…`. Tell the user to keep that terminal open (Ctrl+C stops Botss and every agent), then describe their idea on the Idea screen.
+3. **Make `botss` work from any folder.** Explain, then ask before running `node packages/cli/bin/botss.js setup`: on Windows it writes `%USERPROFILE%\.botss\bin\botss.cmd` and adds that folder to the *user* PATH; on macOS/Linux it writes `~/.local/bin/botss` (and says if that folder is not on PATH). They need a new terminal afterwards. If they decline, they can run `node <repo>/packages/cli/bin/botss.js <command>` instead. Do not use `npm link`: the workspace's `workspace:*` dependencies are pnpm-only.
+4. **Pick the project folder:** ask where the app should live (a new folder, or an existing project they want to change). Then, in a new terminal, `cd` there and run `botss up`. It opens the dashboard for that folder; if it is not a Botss project yet, the dashboard's folder picker opens there and sets it up (or run `botss init` first). The user's current branch is never modified; Botss works on `botss/integration` with worktrees in `../.botss-worktrees/`.
+5. Tell the user to keep that terminal open (Ctrl+C stops Botss and every agent), then describe their idea (or, for an existing project, the change they want) on the Idea screen.
 
-Then point them at: the approval gates (they approve the PRD, design direction, architecture, plan, and release), the team builder (start small: one backend, one frontend), the Usage screen and daily budget in Settings, and the red kill switch in the header. Remind them of the README's "Usage and terms" section: Botss uses their own Claude usage, and they are responsible for following Anthropic's terms.
+Then point them at: the approval gates (they approve the PRD, design direction, the screen designs, architecture, plan, and release), **Request a change** in the header for changing their mind mid-build, the Agents screen to watch agents work live, the team builder (start small: one backend, one frontend), the Usage screen and daily budget in Settings, and the red kill switch in the header. Remind them of the README's "Usage and terms" section: Botss uses their own Claude usage, and they are responsible for following Anthropic's terms.
 
 ## Working on Botss itself
 

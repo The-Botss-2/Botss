@@ -54,6 +54,8 @@ const SCENARIO = {
   },
   "designer:direction": {
     steps: [
+      { write: ".botss/docs/design/directions/A.html", content: "<!doctype html><h1>Direction A</h1>" },
+      { write: ".botss/docs/design/directions/B.html", content: "<!doctype html><h1>Direction B</h1>" },
       { write: ".botss/docs/design/directions.json", content: batch("Pick a direction.", "Which visual direction?") },
       { botss: ["ask", "@human", "--batch", ".botss/docs/design/directions.json"] },
     ],
@@ -106,11 +108,18 @@ describe("1. happy path through every phase (fake claude)", () => {
     expect(svc.phase).toBe("design_direction");
 
     const q2 = await waitFor(() => svc.questions("open").find((q) => q.kind === "batch"), "design directions");
+    // The owner sees a preview of each direction before choosing.
+    expect((await h.api("GET", "/design")).directionPreviews).toEqual(["A.html", "B.html"]);
     await h.api("POST", `/questions/${q2.id}/answer`, { answer: { answers: { Q1: "B" } } });
-    await waitFor(phase("architecture_review"), "design done");
+    // Screens are submitted for review; nothing moves on until the owner approves the design.
+    await waitFor(() => svc.doc("design")?.status === "submitted", "design submitted");
+    await new Promise((r) => setTimeout(r, 500));
+    expect(svc.phase).toBe("design");
     const design = await h.api("GET", "/design");
     expect(design.screens).toEqual(["home.html"]);
     expect(design.tokens.color.bg).toBe("#fafaf7");
+    await h.api("POST", "/gates/design/approve", {});
+    expect(svc.phase).toBe("architecture_review");
 
     await waitFor(() => svc.doc("architecture")?.status === "submitted", "architecture submitted");
     await h.api("POST", "/gates/architecture/approve", {});
@@ -148,6 +157,7 @@ describe("1. happy path through every phase (fake claude)", () => {
     expect(h.project.db.all("SELECT gate, decision FROM approvals ORDER BY id").map((r) => `${r.gate}:${r.decision}`)).toEqual([
       "prd:approved",
       "design_direction:approved",
+      "design:approved",
       "architecture:approved",
       "plan:approved",
       "release:approved",

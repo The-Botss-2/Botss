@@ -33,10 +33,21 @@ export interface ProjectState {
   paused: boolean;
   pauseReason?: string | null;
   limitedUntil?: number | null;
-  idea?: { text: string; stakes?: string; attachments: string[]; links: string[] } | null;
+  idea?: { text: string; stakes?: string; attachments: string[]; links: string[]; kind?: string } | null;
   designChoice?: string | null;
   previewRunning?: boolean;
   alerts?: { id: number; ts: string; text: string; task?: string | null }[];
+  changes?: ChangeRequest[];
+}
+
+/** An owner change request mid-project: PM updates the PRD, owner approves, tech lead replans, owner approves. */
+export interface ChangeRequest {
+  id: string;
+  text: string;
+  status: "pm" | "prd_review" | "replan" | "plan_review" | "applied" | "cancelled";
+  created_at: string;
+  updated_at: string;
+  attachments: string[];
 }
 
 export interface EventMeta {
@@ -98,8 +109,11 @@ export interface TaskMeta {
   resume?: { session: string; prompt: string } | null;
   /** Extra prompt text for the next fresh run (e.g. review comments for the tech lead's ruling). */
   note?: string | null;
-  /** Answer task: the message it must answer. */
+  /** Answer task: the message it must answer (first), and every message batched into it. */
   answers?: string;
+  answersList?: string[];
+  /** Planning task working on a change request. */
+  changeId?: string;
   allowNetwork?: boolean;
   /** Integrate task: the task branch to merge in. */
   mergeBranch?: string;
@@ -358,13 +372,15 @@ export class ProjectService {
   }
 
   /** Replace not-yet-started build tasks with a newly validated plan. */
-  importPlan(specs: TaskSpec[], actor: string): void {
+  /** `hold` marks newly imported tasks (a change request's replan) so they wait for the owner's approval. */
+  importPlan(specs: TaskSpec[], actor: string, hold: string | null = null): void {
+    const norm = (s: string | undefined) => (s ?? "").replace(/\r\n/g, "\n").trim();
     this.db.tx(() => {
       const existing = this.tasks({ kind: ["build"] });
       const started = existing.filter((t) => t.status !== "todo");
       if (started.length) {
         const keep = new Set(started.map((t) => t.id));
-        const clash = specs.find((s) => keep.has(s.id) && existing.find((e) => e.id === s.id)?.source !== s.source);
+        const clash = specs.find((s) => keep.has(s.id) && norm(existing.find((e) => e.id === s.id)?.source) !== norm(s.source));
         if (clash) throw new ServiceError(`task ${clash.id} already started; create a new task ID instead of changing it`, 409);
       }
       for (const t of existing.filter((x) => x.status === "todo")) {
@@ -374,8 +390,8 @@ export class ProjectService {
       for (const s of specs) {
         if (this.task(s.id)) continue;
         this.db.run(
-          `INSERT INTO tasks (id, kind, title, role, story, covers, after, owns, may_touch, verify, size, body, source, status, priority)
-           VALUES (?, 'build', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?)`,
+          `INSERT INTO tasks (id, kind, title, role, story, covers, after, owns, may_touch, verify, size, body, source, status, priority, hold)
+           VALUES (?, 'build', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'todo', ?, ?)`,
           s.id,
           s.title,
           s.role,
@@ -389,6 +405,7 @@ export class ProjectService {
           s.body,
           s.source,
           s.id === "T000" ? 0 : s.id === "T001" ? 1 : 100,
+          hold,
         );
         for (const d of s.after) this.db.run("INSERT OR IGNORE INTO task_deps (task, depends_on) VALUES (?, ?)", s.id, d);
       }

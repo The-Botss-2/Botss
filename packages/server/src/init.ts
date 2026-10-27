@@ -39,6 +39,8 @@ export interface InitResult {
   created: string[];
   integration: string;
   alreadyInitialized: boolean;
+  existing: boolean;
+  warnings: string[];
 }
 
 function copyDir(src: string, dst: string): void {
@@ -57,14 +59,32 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
   const created: string[] = [];
   fs.mkdirSync(root, { recursive: true });
   const already = fs.existsSync(paths.botss) && fs.existsSync(paths.config);
+  // An existing codebase: the folder already has files (other than dotfiles and Botss's own).
+  const existing = fs.readdirSync(root).some((n) => !n.startsWith("."));
+  const warnings: string[] = [];
 
   if (!(await isRepo(root))) {
     await git(root, ["init", "-b", "main"]);
     created.push("git repository");
   }
   if (!(await hasCommits(root))) {
-    await git(root, ["commit", "--allow-empty", "-m", "Initial commit"]);
-    created.push("initial commit");
+    if (existing) {
+      // Agents work from git, so the existing code must be in the first commit. Keep heavy folders out
+      // when the project has no .gitignore of its own.
+      if (!fs.existsSync(path.join(root, ".gitignore"))) {
+        const ex = path.join(root, ".git", "info", "exclude");
+        fs.mkdirSync(path.dirname(ex), { recursive: true });
+        fs.appendFileSync(ex, "\nnode_modules/\n.venv/\nvenv/\n__pycache__/\ndist/\nbuild/\n.next/\n.env\n");
+      }
+      await git(root, ["add", "-A", "--", ".", ":(exclude).botss"]);
+      await git(root, ["commit", "--allow-empty", "-m", "Initial commit (existing code, added by botss init)"]);
+      created.push("initial commit of your existing code");
+    } else {
+      await git(root, ["commit", "--allow-empty", "-m", "Initial commit"]);
+      created.push("initial commit");
+    }
+  } else if ((await git(root, ["status", "--porcelain"])).stdout.trim()) {
+    warnings.push("You have uncommitted changes. Agents start from your last commit, so commit what they should see.");
   }
 
   // Local state in the main checkout (excluded from git via .git/info/exclude, so the owner's branch is untouched).
@@ -72,7 +92,7 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
   const rolesText = fs.readFileSync(opts.rolesSource ?? ROLES_SOURCE, "utf8");
   if (!fs.existsSync(path.join(paths.botss, "roles.yaml"))) fs.writeFileSync(path.join(paths.botss, "roles.yaml"), rolesText);
   if (!fs.existsSync(paths.config)) {
-    fs.writeFileSync(paths.config, initialConfigYaml(parseRolesYaml(rolesText)));
+    fs.writeFileSync(paths.config, initialConfigYaml(parseRolesYaml(rolesText), { existing }));
     created.push(".botss/config.yaml");
   }
   const commonDir = (await git(root, ["rev-parse", "--git-common-dir"])).stdout.trim();
@@ -105,5 +125,5 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
   if (await commitAll(integ, "botss: initialize project (skills, docs, tasks)")) created.push("integration commit");
 
   addToRegistry(root);
-  return { root, created, integration: integ, alreadyInitialized: already };
+  return { root, created, integration: integ, alreadyInitialized: already, existing, warnings };
 }

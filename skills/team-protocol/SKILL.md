@@ -86,6 +86,21 @@ Good message: `botss msg @frontend "GET /api/orders now paginates: response is {
 
 Bad message: `botss msg @frontend "Hi! I'm working on the orders API now, will let you know when done."`
 
+**Keep it cheap.** Every message lands in a teammate's context and is paid for there:
+* One or two sentences. Point to files (`contracts/openapi.yaml#OrderRead`, `D-007`) instead of pasting them. The CLI rejects messages over 2,000 characters.
+* One clear question per `ask`, with your proposed default, so the answer can be one line.
+* Prefer `@role` or a specific agent over `@team`. A `@team` message is read by everyone.
+* Read your inbox once at the start of a run, not repeatedly. Do not reply just to acknowledge.
+* Decisions and contract changes go in files (`botss decision`, the contract), so later runs read them once instead of rereading message threads.
+
+## 4a. Build only what was asked
+
+The owner pays for every line, and decides what the product is. Scope creep is the most expensive mistake a team of agents can make, because each extra makes more tasks, tests, reviews, and merges.
+* Build what your task, the approved PRD, and the contracts say. Nothing more: no extra endpoints, fields, screens, settings, animations, or "nice to have" polish.
+* If something seems missing, do not add it. Ask the role that owns it (`@pm` for product, `@designer` for look and flow), or write it under "Known gaps and follow-ups" in your handoff.
+* If you had to assume something, write the assumption in your handoff or the document you are producing, where the owner will see it. Never hide an assumption in code.
+* Reviewers treat unrequested additions as a finding (`--severity major` when it adds risk or work).
+
 ## 5. Git, worktrees, and file ownership
 
 * You work only in your own worktree (`botss whoami` shows it) on branch `botss/<task-id>-<slug>`. Never `cd` into another agent's worktree and never touch `main` directly.

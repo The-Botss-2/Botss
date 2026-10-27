@@ -4,8 +4,10 @@ import path from "node:path";
 import type { Row } from "@botss/core";
 import type { TaskRow } from "./service.ts";
 
-// Prompt assembly. system.md = Botss header + the role's SKILL.md bodies (roles.yaml order). The run prompt
-// (user message) stays lean: the task file, unread messages, and pointers to files by path.
+// Prompt assembly. system.md = a Botss header + the role's SKILL.md bodies (roles.yaml order). It is identical
+// for every run of a role (no agent id, task, or mode in it), so Claude Code's prompt cache is reused across
+// runs and agents. Everything run-specific goes in the run prompt (user message), which stays lean: who you
+// are, the task file, a few unread messages, and pointers to files by path.
 
 export function stripFrontmatter(md: string): string {
   return md.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
@@ -17,12 +19,8 @@ export function readSkill(skillsDir: string, name: string): string | null {
 }
 
 export interface SystemPromptInput {
-  agent: string;
-  role: string;
   roleTitle: string;
   project: string;
-  task: string | null;
-  mode: string;
   skills: string[];
   skillsDir: string;
 }
@@ -31,14 +29,18 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
   const header = [
     "# Botss agent run",
     "",
-    `You are **${i.agent}**, the ${i.roleTitle} on the Botss team building **${i.project}**.`,
-    `Task: ${i.task ?? "(planning run, no board task)"} · Mode: \`${i.mode}\``,
+    `You are the ${i.roleTitle} on the Botss team building **${i.project}**. Your agent id, task, and mode are in the first message.`,
     "",
     "You run headless: nobody reads this conversation. Everything the team needs goes through the `botss` CLI or into files.",
     "Your skills are below. Their `references/` and `templates/` live under `.botss/skills/<skill>/` in your working directory",
     "(for example `.botss/skills/team-protocol/references/botss-cli.md`). Open a reference only when the skill tells you to.",
     "Project conventions live in `.botss/docs/architecture.md` (Conventions section) once the architecture exists.",
+    "If `.botss/docs/codebase.md` exists, this is an existing codebase: follow its conventions and change only what your task asks.",
     "A guard hook enforces your write paths and blocks unsafe commands; if it blocks you, do not try to get around it: ask.",
+    "",
+    "**Build only what the owner asked for.** Do not add features, screens, endpoints, settings, or polish that the idea, the",
+    "approved PRD, or your task does not ask for. If something seems missing, ask (or note it under Out of scope / Later); never",
+    "add it silently. Assumptions you must make are written down where the owner will see them.",
     "",
   ].join("\n");
   const bodies = i.skills
@@ -50,23 +52,30 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
   return header + bodies + "\n";
 }
 
-const MODE_GUIDE: Record<string, string> = {
+export const MODE_GUIDE: Record<string, string> = {
+  survey:
+    "Mode: survey. This project is an existing codebase. Read it narrowly: README, package manifests and lockfiles, the top-level layout, CI config, a few representative source and test files. Do not change code. Write `.botss/docs/codebase.md`: what the app does, stack and versions, folder layout, how to run it, conventions new code must follow (naming, errors, data access, UI components), risky areas, and a `## Checks` section with the exact test, lint, type check, and build commands (one per line, runnable without make). Commit, then `botss doc submit codebase` and finish.",
   discover:
-    "Mode: discover. Read the owner's idea in `.botss/docs/idea.md` (and anything in `.botss/docs/attachments/`). Write your clarifying questions as one batch to `.botss/docs/discovery/questions.json` and post it with `botss ask @human --batch .botss/docs/discovery/questions.json`. Then finish your run with a one-line summary.",
+    "Mode: discover. Read the owner's request in `.botss/docs/idea.md` (and anything in `.botss/docs/attachments/`; for an existing codebase also `.botss/docs/codebase.md`). Ask only what changes the result; do not ask about things the owner already said. Write your clarifying questions as one batch to `.botss/docs/discovery/questions.json` and post it with `botss ask @human --batch .botss/docs/discovery/questions.json`. Then finish your run with a one-line summary.",
   draft:
-    "Mode: draft. Write the PRD to `.botss/docs/prd.md` from `.botss/skills/product-manager/templates/prd.md`, using the idea and the owner's answers, then `botss doc submit prd` and finish.",
-  revise: "Mode: revise. The owner requested changes to the PRD. Address every comment below in `.botss/docs/prd.md`, then `botss doc submit prd` and finish.",
+    "Mode: draft. Write the PRD to `.botss/docs/prd.md` from `.botss/skills/product-manager/templates/prd.md`, using only the idea and the owner's answers. Every FR must trace to something the owner said; ideas of your own go under Out of scope / Later, not into the FRs. Then `botss doc submit prd` and finish.",
+  revise: "Mode: revise. The owner requested changes to the PRD. Address every comment below in `.botss/docs/prd.md` (and nothing else), then `botss doc submit prd` and finish.",
+  change:
+    "Mode: change. The owner sent a change request (below) in the middle of the project. Update `.botss/docs/prd.md` for exactly that change: add or modify FRs and acceptance criteria, mark removed ones as removed, and add a `## Changelog` entry (change id, date, what changed and why). Do not change anything the request does not touch. Ask `@human` only if the request is ambiguous in a way that changes the result. Commit, then `botss doc submit prd` and finish.",
   direction:
-    "Mode: direction. Read the approved PRD (`.botss/docs/prd.md`). Propose 2 to 3 visual directions as one batch (`.botss/docs/design/directions.json`, same format as a question batch, one question whose options are the directions; include palette, type, and mood in each option label or description) and post with `botss ask @human --batch .botss/docs/design/directions.json`. Then finish.",
+    "Mode: direction. Read the approved PRD (`.botss/docs/prd.md`). Propose 2 to 3 visual directions as one batch (`.botss/docs/design/directions.json`, same format as a question batch: one question whose options are the directions, with keys A, B, C; put palette, type, and mood in each option's label). For each option also write a self-contained preview page `.botss/docs/design/directions/<key>.html` (for example `A.html`: the app's main screen in that direction, inline CSS, no external scripts or fonts) so the owner can see it before choosing. Commit, post with `botss ask @human --batch .botss/docs/design/directions.json`, and finish.",
   system:
     "Mode: system. Build the chosen direction into `.botss/docs/contracts/design-tokens.json`, the Tailwind v4 theme, and `.botss/docs/design/DESIGN.md`. Commit. Then finish (screens come in the next run).",
   screens:
-    "Mode: screens. Write one spec and one HTML mockup per screen under `.botss/docs/design/screens/` (mockups as `<screen>.html`, self-contained, no external scripts). Commit, then `botss doc submit design` and finish.",
+    "Mode: screens. Write one spec and one HTML mockup per screen the PRD lists under `.botss/docs/design/screens/` (mockups as `<screen>.html`, self-contained, inline CSS, no external scripts). Design only the screens and states the PRD needs. Commit, then `botss doc submit design` and finish. The owner reviews the screens before the architecture starts; if comments are included below, address every one.",
   architect:
-    "Mode: architect. Write `.botss/docs/architecture.md` and the contracts in `.botss/docs/contracts/` from the approved PRD and design. Run the architecture checks, commit, then `botss doc submit architecture` and finish.",
+    "Mode: architect. Write `.botss/docs/architecture.md` and the contracts in `.botss/docs/contracts/` from the approved PRD and design (and `.botss/docs/codebase.md` if it exists: extend the existing architecture, do not replace it). Run the architecture checks, commit, then `botss doc submit architecture` and finish.",
   plan:
-    "Mode: plan. Write the task files in `.botss/tasks/` and `.botss/docs/plan-summary.md` (team recommendation, critical path, quota estimate). Run `botss plan check .botss/tasks/` until clean, commit, then `botss plan submit .botss/tasks/` and finish.",
-  answer: "Mode: answer. A teammate asked you a question (below). Answer it with `botss reply <message-id> \"...\"`, update a contract or record a decision if needed (and commit), then finish.",
+    "Mode: plan. Write the task files in `.botss/tasks/` and `.botss/docs/plan-summary.md` (team recommendation, critical path, quota estimate). Every task must trace to an approved FR. For an existing codebase there is no scaffold: no T000/T001 unless something they would create is missing, and verify commands come from `.botss/docs/codebase.md`. Run `botss plan check .botss/tasks/` until clean, commit, then `botss plan submit .botss/tasks/` and finish.",
+  replan:
+    "Mode: replan. The owner approved a PRD change (below). Update contracts and architecture only where the change needs it, then update the plan: add new task files with new IDs (continue after the highest existing ID), edit only tasks that are still todo, and never edit, renumber, or delete the files of tasks that started or finished (`botss task list` shows statuses). Point `after` at existing tasks you build on. Update `.botss/docs/plan-summary.md` with a short section for this change. Run `botss plan check .botss/tasks/`, commit, then `botss plan submit .botss/tasks/` and finish.",
+  answer:
+    "Mode: answer. Teammates asked you the questions below. Answer each with one short `botss reply <message-id> \"...\"` (point to files instead of pasting them). Update a contract or record a decision only if the answer changes one (and commit). Then finish.",
   integrate:
     "Mode: integrate. A merge into `botss/integration` failed. Your worktree is on a fresh branch from the integration head. Merge the task branch named below (`git merge --no-ff <branch>`), resolve to what the contract says, run the checks, commit, write your handoff, and `botss task done $BOTSS_TASK --status DONE --handoff .botss/handoffs/$BOTSS_TASK.md`.",
   ruling:
@@ -78,6 +87,10 @@ const MODE_GUIDE: Record<string, string> = {
     "Mode: audit. Audit the merged branch per your skill. File bugs with `botss bug create --task $BOTSS_TASK ...` for real findings, write `.botss/docs/security/audit.md`, commit, and finish with `botss task done $BOTSS_TASK --status DONE --handoff .botss/handoffs/$BOTSS_TASK.md`.",
 };
 
+/** Unread messages shown in a run prompt: the latest few, each capped. The agent can run `botss inbox` for more. */
+const INBOX_LIMIT = 8;
+const INBOX_CHARS = 600;
+
 export interface RunPromptInput {
   mode: string;
   stage: string;
@@ -86,16 +99,22 @@ export interface RunPromptInput {
   extra?: string[];
   handoff?: string | null;
   diffStat?: string | null;
+  agent?: string;
+  roleTitle?: string;
 }
 
 export function buildRunPrompt(i: RunPromptInput): string {
   const parts: string[] = [];
+  if (i.agent) {
+    const task = i.task && i.task.kind !== "planning" ? `Task: ${i.task.id}` : "Planning run (no board task)";
+    parts.push(`You are **${i.agent}** (${i.roleTitle ?? "agent"}). ${task} · Mode: \`${i.mode}\``);
+  }
   const guide = MODE_GUIDE[i.mode];
   if (guide) parts.push(guide);
-  else if (i.stage === "review") parts.push("Mode: review. Review this task's diff (read only), post findings with `botss review comment`, then `botss review approve` or `botss review request-changes`.");
+  else if (i.stage === "review") parts.push("Mode: review. Review this task's diff (read only), post findings with `botss review comment`, then `botss review approve` or `botss review request-changes`. Flag anything the task did not ask for as scope creep.");
   else if (i.stage === "verify") parts.push("Mode: verify. Verify this task against its acceptance criteria in the running app with your own stack, then `botss qa pass` or `botss qa fail` with a report.");
   else if (i.stage === "fix") parts.push("Mode: fix. Your task came back with review comments or QA bugs (below). Address every one, re-verify, and finish with `botss task done`.");
-  else parts.push(`Mode: ${i.mode}.`);
+  else parts.push(`Mode: ${i.mode}. Build exactly what the task asks; nothing extra.`);
 
   if (i.task && i.task.kind !== "planning") {
     parts.push(`## Task ${i.task.id}\n\n\`\`\`markdown\n${i.task.source || `# ${i.task.title}\n\n${i.task.body}`}\n\`\`\``);
@@ -106,9 +125,14 @@ export function buildRunPrompt(i: RunPromptInput): string {
   if (i.diffStat) parts.push(`## Diff stat (base...head)\n\n\`\`\`\n${i.diffStat}\n\`\`\``);
   for (const e of i.extra ?? []) if (e) parts.push(e);
   if (i.inbox.length) {
-    parts.push(`## Unread messages\n\n${i.inbox.map((m) => `- ${m.id} from ${m.from_agent} (${m.kind}): ${m.body}`).join("\n")}`);
+    const shown = i.inbox.slice(-INBOX_LIMIT);
+    const more = i.inbox.length - shown.length;
+    const clip = (s: string) => (s.length > INBOX_CHARS ? `${s.slice(0, INBOX_CHARS)}… (run \`botss inbox\` for the rest)` : s);
+    parts.push(
+      `## Unread messages${more ? ` (latest ${shown.length} of ${i.inbox.length})` : ""}\n\n${shown.map((m) => `- ${m.id} from ${m.from_agent} (${m.kind}): ${clip(String(m.body))}`).join("\n")}`,
+    );
   }
-  parts.push(i.task && i.task.kind !== "planning" ? "Start by running `botss whoami` and `botss task show $BOTSS_TASK`." : "Start by running `botss whoami`.");
+  parts.push(i.task && i.task.kind !== "planning" ? "Start by running `botss task show $BOTSS_TASK`." : "Start with the files named above.");
   return parts.join("\n\n");
 }
 
