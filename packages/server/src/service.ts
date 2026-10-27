@@ -67,6 +67,76 @@ function parseJ<T>(s: unknown, fallback: T): T {
   }
 }
 
+/**
+ * What the owner should be told about. Events that carry `data.notify` are the dashboard's notifications
+ * (toasts, the bell, desktop notifications). level: action = the owner must do something; warning = something
+ * went wrong; success = good news; info = progress worth a glance.
+ */
+export interface Notification {
+  level: "action" | "warning" | "success" | "info";
+  title: string;
+  body?: string;
+  screen: "questions" | "docs" | "board" | "design" | "team" | "agents" | "usage" | "feed";
+  doc?: string;
+  task?: string | null;
+}
+
+const GATE_DOCS: Record<string, string> = {
+  prd: "the PRD",
+  design: "the screen designs",
+  architecture: "the architecture",
+  plan: "the plan",
+  release: "the release",
+};
+
+export function notificationFor(type: string, summary: string, data: Record<string, any>, meta: EventMeta): Notification | null {
+  const task = meta.task ?? null;
+  switch (type) {
+    case "ask.ask":
+    case "ask.batch":
+      if (data.to !== "@human") return null;
+      return { level: "action", title: type === "ask.batch" ? `${meta.actor} needs your decisions` : `${meta.actor} asks you`, body: String(data.body ?? "").slice(0, 200), screen: "questions", task };
+    case "doc.submitted":
+      if (data.status !== "submitted" || !GATE_DOCS[data.doc]) return null;
+      return {
+        level: "action",
+        title: `Review ${GATE_DOCS[data.doc]}`,
+        body: `${meta.actor} submitted ${data.doc} v${data.version}. Approve it or ask for changes.`,
+        screen: data.doc === "design" ? "design" : data.doc === "plan" ? "team" : "docs",
+        doc: data.doc,
+      };
+    case "task.status":
+      // A task blocked on a question to the owner is announced by the question itself.
+      if (data.to === "blocked" && !String(data.reason ?? "").startsWith("asked @human"))
+        return { level: "warning", title: `${task} is blocked`, body: String(data.reason ?? ""), screen: "board", task };
+      if (data.to === "done" && task && /^(T|I|REL)/.test(task)) return { level: "success", title: `${task} is done`, body: String(data.reason ?? ""), screen: "board", task };
+      return null;
+    case "review.verdict":
+      return data.verdict === "changes_requested" ? { level: "info", title: `Review asked for changes on ${task}`, body: String(data.summary ?? ""), screen: "board", task } : null;
+    case "qa.fail":
+      return { level: "warning", title: `QA failed ${task}`, body: summary, screen: "board", task };
+    // Failed checks, merge conflicts, usage limits, and stuck tasks all raise an alert with the details: one
+    // notification each, not two.
+    case "alert.raised":
+      return { level: "warning", title: "Botss needs your attention", body: summary, screen: "questions", task };
+    case "quota.resumed":
+      return { level: "info", title: "Usage limit reset", body: "Agents are working again.", screen: "agents" };
+    case "phase.changed":
+      if (data.to === "build") return { level: "success", title: "The build has started", body: "Agents are now working on the plan.", screen: "agents" };
+      if (data.to === "done") return { level: "success", title: "Your project is done", body: "The release was approved.", screen: "board" };
+      return null;
+    case "change.status":
+      if (data.status === "prd_review") return { level: "action", title: `Review the PRD update for ${data.id}`, screen: "docs", doc: "prd" };
+      if (data.status === "plan_review") return { level: "action", title: `Review the plan update for ${data.id}`, screen: "team", doc: "plan" };
+      if (data.status === "applied") return { level: "success", title: `${data.id} applied`, screen: "board" };
+      return null;
+    case "project.killed":
+      return { level: "info", title: "All agents stopped", body: summary, screen: "agents" };
+    default:
+      return null;
+  }
+}
+
 export interface TaskRow {
   id: string;
   kind: TaskKind;
@@ -219,6 +289,8 @@ export class ProjectService {
   // ------------------------------------------------------------------------------------------ events
 
   emit(type: string, summary: string, data: Record<string, unknown> = {}, meta: EventMeta = {}): BotssEvent {
+    const note = notificationFor(type, summary, data, meta);
+    if (note) data = { ...data, notify: note };
     const r = this.db.run(
       "INSERT INTO events (type, actor, role, task, run_id, summary, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
       type,
@@ -235,9 +307,10 @@ export class ProjectService {
     return out;
   }
 
-  events(opts: { after?: number; task?: string; limit?: number; types?: string[]; run?: string } = {}): BotssEvent[] {
+  events(opts: { after?: number; task?: string; limit?: number; types?: string[]; run?: string; notify?: boolean } = {}): BotssEvent[] {
     const where: string[] = [];
     const params: any[] = [];
+    if (opts.notify) where.push("json_extract(data, '$.notify') IS NOT NULL");
     if (opts.after) {
       where.push("id > ?");
       params.push(opts.after);

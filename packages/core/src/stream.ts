@@ -5,7 +5,7 @@ import { emptyUsage, type UsageTotals } from "./types.ts";
 
 export type StreamEvent =
   | { kind: "init"; sessionId: string; model?: string; tools?: string[] }
-  | { kind: "tool"; tool: string; summary: string; file?: string; toolUseId?: string; input: Record<string, unknown> }
+  | { kind: "tool"; tool: string; summary: string; file?: string; toolUseId?: string; input: Record<string, unknown>; activity: Activity; label: string }
   | { kind: "text"; text: string }
   /** Per-API-call usage on assistant messages, for a live token count before the final result. */
   | { kind: "usage"; usage: UsageTotals }
@@ -29,28 +29,74 @@ function short(s: string, n = 120): string {
   return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 }
 
-export function summarizeTool(name: string, input: Record<string, unknown>): { summary: string; file?: string } {
+/** What an agent is doing, in words an owner understands. Drives the dashboard's activity icons and status line. */
+export type Activity = "reading" | "searching" | "writing" | "testing" | "checking" | "installing" | "running" | "talking" | "planning" | "reviewing" | "handing_off";
+
+export interface ToolSummary {
+  /** Technical one-liner for the feed: "Editing `src/app.ts`", "Running `pnpm test`". */
+  summary: string;
+  file?: string;
+  activity: Activity;
+  /** Plain-language status: "Writing app.ts", "Running the tests", "Messaging the frontend engineer". */
+  label: string;
+}
+
+const base = (f?: string) => (f ? String(f).replace(/\\/g, "/").split("/").pop() : "a file");
+
+export function classifyCommand(cmd: string): { activity: Activity; label: string } {
+  const c = cmd.toLowerCase();
+  const botss = /(^|[\s;&|(])botss\s+(\S+)(?:\s+(\S+))?/.exec(c);
+  if (botss) {
+    const [, , sub, arg] = botss;
+    if (sub === "msg") return { activity: "talking", label: `Messaging ${arg?.replace(/^@/, "") ?? "a teammate"}` };
+    if (sub === "ask") return { activity: "talking", label: arg === "@human" ? "Asking you a question" : `Asking ${arg?.replace(/^@/, "") ?? "a teammate"}` };
+    if (sub === "reply") return { activity: "talking", label: "Answering a teammate" };
+    if (sub === "progress") return { activity: "talking", label: "Posting a progress update" };
+    if (sub === "task" && arg === "done") return { activity: "handing_off", label: "Handing off the finished task" };
+    if (sub === "task" && arg === "block") return { activity: "talking", label: "Reporting a blocker" };
+    if (sub === "review") return { activity: "reviewing", label: arg === "approve" ? "Approving the work" : arg === "request-changes" ? "Requesting changes" : "Writing review notes" };
+    if (sub === "qa") return { activity: "reviewing", label: arg === "pass" ? "Signing off QA" : "Reporting QA results" };
+    if (sub === "bug") return { activity: "reviewing", label: "Filing a bug" };
+    if (sub === "doc") return { activity: "planning", label: arg === "submit" ? "Submitting a document for your review" : "Reading the project documents" };
+    if (sub === "plan") return { activity: "planning", label: arg === "submit" ? "Submitting the plan" : "Checking the plan" };
+    if (sub === "decision") return { activity: "planning", label: "Recording a decision" };
+    return { activity: "planning", label: "Checking the task board" };
+  }
+  if (/\b(pytest|vitest|jest|playwright|mocha|go test|cargo test|npm (run )?test|pnpm (run )?test|yarn test|bun test|unittest)\b/.test(c)) return { activity: "testing", label: "Running the tests" };
+  if (/\b(eslint|ruff|mypy|tsc|lint|typecheck|prettier|black|flake8)\b/.test(c)) return { activity: "checking", label: "Checking the code (lint and types)" };
+  if (/\b(npm (i|install|ci)|pnpm (i|install|add)|yarn (add|install)|uv (add|sync|pip)|pip3? install|poetry (add|install)|bun (add|install)|cargo add|go get)\b/.test(c)) return { activity: "installing", label: "Installing dependencies" };
+  if (/\b(build|vite build|next build|webpack|cargo build|go build)\b/.test(c)) return { activity: "checking", label: "Building the app" };
+  if (/\bdocker\b/.test(c)) return { activity: "running", label: "Starting services (Docker)" };
+  if (/\b(curl|wget|http)\b/.test(c)) return { activity: "testing", label: "Trying the running app" };
+  if (/^\s*(ls|cat|head|tail|find|tree|wc|pwd|git (status|diff|log|show))\b/.test(c)) return { activity: "reading", label: "Looking around the project" };
+  if (/\b(mkdir|touch|cp|mv)\b/.test(c)) return { activity: "writing", label: "Setting up files" };
+  return { activity: "running", label: "Running a command" };
+}
+
+export function summarizeTool(name: string, input: Record<string, unknown>): ToolSummary {
   const file = (input.file_path ?? input.notebook_path ?? input.path) as string | undefined;
   switch (name) {
     case "Edit":
     case "MultiEdit":
-      return { summary: `Editing \`${file}\``, file };
+      return { summary: `Editing \`${file}\``, file, activity: "writing", label: `Editing ${base(file)}` };
     case "Write":
-      return { summary: `Writing \`${file}\``, file };
+      return { summary: `Writing \`${file}\``, file, activity: "writing", label: `Writing ${base(file)}` };
     case "Read":
-      return { summary: `Reading \`${file}\``, file };
+      return { summary: `Reading \`${file}\``, file, activity: "reading", label: `Reading ${base(file)}` };
     case "NotebookEdit":
-      return { summary: `Editing notebook \`${file}\``, file };
-    case "Bash":
-      return { summary: `Running \`${short(String(input.command ?? ""), 100)}\`` };
+      return { summary: `Editing notebook \`${file}\``, file, activity: "writing", label: `Editing ${base(file)}` };
+    case "Bash": {
+      const command = String(input.command ?? "");
+      return { summary: `Running \`${short(command, 100)}\``, ...classifyCommand(command) };
+    }
     case "Grep":
-      return { summary: `Searching for \`${short(String(input.pattern ?? ""), 60)}\`` };
+      return { summary: `Searching for \`${short(String(input.pattern ?? ""), 60)}\``, activity: "searching", label: "Searching the code" };
     case "Glob":
-      return { summary: `Finding files \`${short(String(input.pattern ?? ""), 60)}\`` };
+      return { summary: `Finding files \`${short(String(input.pattern ?? ""), 60)}\``, activity: "searching", label: "Finding files" };
     case "TodoWrite":
-      return { summary: "Updating its todo list" };
+      return { summary: "Updating its plan", activity: "planning", label: "Updating its plan" };
     default:
-      return { summary: `Using ${name}` };
+      return { summary: `Using ${name}`, activity: "running", label: `Using ${name}` };
   }
 }
 
@@ -70,6 +116,15 @@ export function trimInput(tool: string, input: Record<string, unknown>): Record<
       return pick(["file_path", "content"]);
     case "Bash":
       return pick(["command", "description"]);
+    case "TodoWrite":
+      // The agent's own plan: shown as a live checklist on the dashboard.
+      return {
+        todos: (Array.isArray(input.todos) ? (input.todos as Record<string, unknown>[]) : []).slice(0, 30).map((t) => ({
+          content: clip(String(t.content ?? ""), 200),
+          status: String(t.status ?? "pending"),
+          activeForm: t.activeForm ? clip(String(t.activeForm), 200) : undefined,
+        })),
+      };
     default:
       return pick(["file_path", "path", "pattern", "glob", "notebook_path", "url"]);
   }

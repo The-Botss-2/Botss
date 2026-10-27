@@ -19,6 +19,8 @@ export interface GuardContext {
   allowNetwork?: boolean;
   /** Integrate tasks may `git merge` task branches into their own branch. */
   allowMerge?: boolean;
+  /** Direct workspace mode: agents share the project folder and never change git state themselves. */
+  direct?: boolean;
   /** Resolve symlinks of an absolute path (deepest existing ancestor). Defaults to identity. */
   realpath?: (p: string) => string;
 }
@@ -34,7 +36,32 @@ export interface GuardResult {
   reason?: string;
 }
 
-const PROTECTED_BRANCHES = ["main", "master", "botss/integration", "develop", "trunk"];
+const DIRECT_GIT_DENY = new Set([
+  "add",
+  "commit",
+  "stash",
+  "reset",
+  "checkout",
+  "switch",
+  "restore",
+  "merge",
+  "rebase",
+  "cherry-pick",
+  "revert",
+  "clean",
+  "branch",
+  "worktree",
+  "tag",
+  "am",
+  "apply",
+  "rm",
+  "mv",
+  "pull",
+  "push",
+  "init",
+]);
+
+const PROTECTED_BRANCHES =["main", "master", "botss/integration", "develop", "trunk"];
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]", "host.docker.internal"]);
 const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "NotebookRead"]);
@@ -227,6 +254,12 @@ function checkGit(args0: string[], ctx: GuardContext): GuardResult {
   }
   const sub = args[0];
   const rest = args.slice(1);
+  // Direct mode: several agents share the owner's working tree, and Botss commits each finished task.
+  // Git commands that change the index, history, or other agents' files would break that.
+  if (ctx.direct && sub && DIRECT_GIT_DENY.has(sub)) {
+    if (sub === "branch" && rest.every((a) => a.startsWith("--list") || a === "-a" || a === "-v" || a === "--show-current")) return allow();
+    return deny(`git ${sub} is not used in this project: you work in the shared project folder and Botss commits your task when it passes review and QA. Just edit your files.`);
+  }
   switch (sub) {
     case "push": {
       if (rest.some((a) => a === "-f" || a === "--force" || a.startsWith("--force-with-lease") || a === "--mirror" || a === "--delete" || a === "-d" || a === "--all"))

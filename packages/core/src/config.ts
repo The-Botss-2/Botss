@@ -27,8 +27,15 @@ export function parseRolesYaml(text: string): RolesFile {
   return parsed;
 }
 
-/** Default tool allowlist for headless runs. Explicit rules, never bypassPermissions by default. */
-export const DEFAULT_ALLOWED_TOOLS = [
+/**
+ * Default tools for headless runs. Agents get the shell like a developer using Claude Code; safety comes from the
+ * Botss guard hook (write paths, git, deletes, network, credentials), which runs before every tool call. An
+ * allowlist of command prefixes denied ordinary commands (npm install, pipes, python -m ...) and wasted turns.
+ */
+export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "TodoWrite", "Bash"];
+
+/** The pre-0.2 prefix allowlist; projects still on it are upgraded to the default above. */
+export const LEGACY_ALLOWED_TOOLS = [
   "Read",
   "Grep",
   "Glob",
@@ -52,12 +59,21 @@ export const DEFAULT_ALLOWED_TOOLS = [
   "Bash(curl *)",
 ];
 
-export const DEFAULT_DISALLOWED_TOOLS = ["Bash(git push --force *)", "Bash(git push -f *)", "WebFetch", "WebSearch"];
+/** Web access and sub-agents stay off: they leave the guard's view or multiply token use. */
+export const DEFAULT_DISALLOWED_TOOLS = ["Bash(git push --force *)", "Bash(git push -f *)", "WebFetch", "WebSearch", "Task", "Agent"];
+
+export const WORKSPACE_MODES = ["direct", "isolated"] as const;
+export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
 export const PERMISSION_MODES = ["dontAsk", "acceptEdits", "default", "plan", "auto", "bypassPermissions"] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export const settingsSchema = z.object({
+  /**
+   * direct: agents edit the project folder itself (like Claude Code); Botss commits each finished task.
+   * isolated: each task gets its own git worktree and branch, merged into botss/integration.
+   */
+  workspace: z.enum(WORKSPACE_MODES).default("direct"),
   max_concurrent_agents: z.number().int().min(1).max(32).default(3),
   daily_token_budget: z.number().int().min(0).default(10_000_000),
   /** Percentage of the daily budget kept for the owner's own use. Botss stops starting runs above (100 - reserve)%. */
@@ -106,11 +122,12 @@ export function roleCap(roles: RolesFile, settings: Settings, role: Role): numbe
 }
 
 /** Initial `.botss/config.yaml` written by `botss init`. */
-export function initialConfigYaml(roles: RolesFile, opts: { existing?: boolean } = {}): string {
+export function initialConfigYaml(roles: RolesFile, opts: { existing?: boolean; workspace?: WorkspaceMode } = {}): string {
   const s = defaultSettings();
   const doc = {
     "# note": "Initial Botss settings. Live settings are edited in the dashboard and stored in .botss/botss.db.",
     existing: Boolean(opts.existing),
+    workspace: opts.workspace ?? "direct",
     max_concurrent_agents: s.max_concurrent_agents,
     daily_token_budget: s.daily_token_budget,
     reserve_percent: s.reserve_percent,

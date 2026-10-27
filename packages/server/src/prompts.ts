@@ -23,7 +23,18 @@ export interface SystemPromptInput {
   project: string;
   skills: string[];
   skillsDir: string;
+  /** Direct mode: the team shares the project folder and Botss handles everything git used to do. */
+  direct?: boolean;
 }
+
+const DIRECT_NOTE = [
+  "**How this project works (overrides your skills where they differ):** the whole team works directly in the",
+  "owner's project folder, at the same time, like colleagues sharing one machine. There are no worktrees, branches,",
+  "or commits: never run `git add`, `commit`, `stash`, `reset`, `checkout`, or `merge` (read-only `git status`,",
+  "`diff`, and `log` are fine). Ignore skill instructions about committing; `botss task done` does not need a commit.",
+  "Edit only your task's files: teammates are editing theirs right now. Botss tracks what each task changed for review.",
+  "",
+].join("\n");
 
 export function buildSystemPrompt(i: SystemPromptInput): string {
   const header = [
@@ -32,8 +43,8 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
     `You are the ${i.roleTitle} on the Botss team building **${i.project}**. Your agent id, task, and mode are in the first message.`,
     "",
     "You run headless: nobody reads this conversation. Everything the team needs goes through the `botss` CLI or into files.",
-    "Your skills are below. Their `references/` and `templates/` live under `.botss/skills/<skill>/` in your working directory",
-    "(for example `.botss/skills/team-protocol/references/botss-cli.md`). Open a reference only when the skill tells you to.",
+    `Your skills are below. Their \`references/\` and \`templates/\` live under \`${i.skillsDir.replace(/\\/g, "/")}/<skill>/\``,
+    `(for example \`${i.skillsDir.replace(/\\/g, "/")}/team-protocol/references/botss-cli.md\`). Open a reference only when the skill tells you to.`,
     "Project conventions live in `.botss/docs/architecture.md` (Conventions section) once the architecture exists.",
     "If `.botss/docs/codebase.md` exists, this is an existing codebase: follow its conventions and change only what your task asks.",
     "A guard hook enforces your write paths and blocks unsafe commands; if it blocks you, do not try to get around it: ask.",
@@ -42,6 +53,7 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
     "approved PRD, or your task does not ask for. If something seems missing, ask (or note it under Out of scope / Later); never",
     "add it silently. Assumptions you must make are written down where the owner will see them.",
     "",
+    ...(i.direct ? [DIRECT_NOTE] : []),
   ].join("\n");
   const bodies = i.skills
     .map((s) => {
@@ -78,6 +90,8 @@ export const MODE_GUIDE: Record<string, string> = {
     "Mode: answer. Teammates asked you the questions below. Answer each with one short `botss reply <message-id> \"...\"` (point to files instead of pasting them). Update a contract or record a decision only if the answer changes one (and commit). Then finish.",
   integrate:
     "Mode: integrate. A merge into `botss/integration` failed. Your worktree is on a fresh branch from the integration head. Merge the task branch named below (`git merge --no-ff <branch>`), resolve to what the contract says, run the checks, commit, write your handoff, and `botss task done $BOTSS_TASK --status DONE --handoff .botss/handoffs/$BOTSS_TASK.md`.",
+  repair:
+    "Mode: repair. The project's checks failed after a teammate's task finished (details below). Find the cause, fix it with the smallest change inside this task's files, run the checks, write your handoff, and `botss task done $BOTSS_TASK --status DONE --handoff .botss/handoffs/$BOTSS_TASK.md`. If the fix belongs in files you do not own, message their owner.",
   ruling:
     "Mode: ruling. This task used all its review rounds. Read the review comments below and the code, decide what remains, make the minimal fixes within the task's owned paths, and finish it with `botss task done`. Record your ruling in the handoff.",
   journey: "Mode: journey. Write and run the committed Playwright journey tests for the PRD's core journeys, then `botss qa pass` or `botss qa fail` on your task.",

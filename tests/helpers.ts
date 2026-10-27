@@ -90,22 +90,25 @@ export async function waitFor<T>(fn: () => T | Promise<T>, what: string, timeout
   }
 }
 
-export async function startHarness(scenario: Record<string, unknown>, opts: { name?: string; settings?: Record<string, unknown> } = {}): Promise<Harness> {
+export async function startHarness(scenario: Record<string, unknown>, opts: { name?: string; settings?: Record<string, unknown>; workspace?: "direct" | "isolated" } = {}): Promise<Harness> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botss-e2e-"));
   const root = path.join(dir, opts.name ?? "sample app");
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "README.md"), "# Sample app\n");
   fs.writeFileSync(path.join(root, "src", ".gitkeep"), "");
-  await git(root, ["init", "-q", "-b", "main"]);
-  await git(root, ["add", "-A"]);
-  await git(root, ["commit", "-q", "-m", "sample project"]);
+  // Direct mode needs no git at all: test it on a plain folder.
+  if (opts.workspace !== "direct") {
+    await git(root, ["init", "-q", "-b", "main"]);
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-q", "-m", "sample project"]);
+  }
   const stateDir = path.join(dir, "fake-state");
   const scenarioFile = path.join(dir, "scenario.json");
   fs.writeFileSync(scenarioFile, JSON.stringify(scenario, null, 2));
   process.env.BOTSS_HOME = path.join(dir, "home");
   process.env.BOTSS_FAKE_SCENARIO = scenarioFile;
   process.env.BOTSS_FAKE_STATE = stateDir;
-  await initProject(root);
+  await initProject(root, { workspace: opts.workspace ?? "isolated" });
 
   const h: Partial<Harness> = { dir, root, stateDir };
   const boot = async () => {

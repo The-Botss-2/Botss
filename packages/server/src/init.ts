@@ -1,4 +1,4 @@
-import { initialConfigYaml, parseRolesYaml } from "@botss/core";
+import { initialConfigYaml, parseConfigYaml, parseRolesYaml, type WorkspaceMode } from "@botss/core";
 import fs from "node:fs";
 import path from "node:path";
 import { branchExists, commitAll, ensureWorktree, git, hasCommits, INTEGRATION_BRANCH } from "./git.ts";
@@ -81,7 +81,10 @@ function samePath(a: string, b: string): boolean {
   return n(a) === n(b);
 }
 
-export async function initProject(root0: string, opts: { skillsSource?: string; rolesSource?: string } = {}): Promise<InitResult> {
+export async function initProject(
+  root0: string,
+  opts: { skillsSource?: string; rolesSource?: string; workspace?: WorkspaceMode } = {},
+): Promise<InitResult> {
   const root = path.resolve(root0);
   const paths = new ProjectPaths(root);
   const created: string[] = [];
@@ -90,6 +93,34 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
   // An existing codebase: the folder already has files (other than dotfiles and Botss's own).
   const existing = fs.readdirSync(root).some((n) => !n.startsWith("."));
   const warnings: string[] = [];
+  const rolesText = fs.readFileSync(opts.rolesSource ?? ROLES_SOURCE, "utf8");
+  const configured = already ? parseConfigYaml(fs.readFileSync(paths.config, "utf8")).workspace : undefined;
+  const workspace: WorkspaceMode = configured ?? opts.workspace ?? "direct";
+
+  if (workspace === "direct") {
+    // Direct mode: agents work in this folder like a team sharing one machine. Botss only adds a hidden
+    // .botss folder; no git repository, branches, or commits.
+    for (const d of [paths.botss, paths.runs, paths.attachments, paths.bin, ...[".botss/docs", ".botss/docs/decisions", ".botss/docs/contracts", ".botss/tasks"].map((d) => path.join(root, d))]) {
+      fs.mkdirSync(d, { recursive: true });
+    }
+    if (!fs.existsSync(path.join(paths.botss, "roles.yaml"))) fs.writeFileSync(path.join(paths.botss, "roles.yaml"), rolesText);
+    if (!fs.existsSync(paths.config)) {
+      fs.writeFileSync(paths.config, initialConfigYaml(parseRolesYaml(rolesText), { existing, workspace }));
+      created.push(".botss/ (Botss's own folder: plans, docs, and the team's notes)");
+    }
+    // If the folder happens to be a git repository, keep .botss out of the owner's `git status`.
+    const top = await git(root, ["rev-parse", "--show-toplevel"], { reject: false });
+    if (top.code === 0 && samePath(top.stdout.trim(), root)) {
+      const ex = path.join(root, ".git", "info", "exclude");
+      const cur = fs.existsSync(ex) ? fs.readFileSync(ex, "utf8") : "";
+      if (!cur.split(/\r?\n/).includes(".botss/")) {
+        fs.mkdirSync(path.dirname(ex), { recursive: true });
+        fs.appendFileSync(ex, `${cur && !cur.endsWith("\n") ? "\n" : ""}# botss\n.botss/\n`);
+      }
+    }
+    addToRegistry(root);
+    return { root, created, integration: root, alreadyInitialized: already, existing, warnings };
+  }
 
   // Every Botss project is its own repository. A folder that merely sits inside another repository (for
   // example a projects folder that is itself a git repo) gets a nested repo of its own, so projects never
@@ -120,10 +151,9 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
 
   // Local state in the main checkout (excluded from git via .git/info/exclude, so the owner's branch is untouched).
   for (const d of [paths.botss, paths.runs, paths.attachments, paths.bin]) fs.mkdirSync(d, { recursive: true });
-  const rolesText = fs.readFileSync(opts.rolesSource ?? ROLES_SOURCE, "utf8");
   if (!fs.existsSync(path.join(paths.botss, "roles.yaml"))) fs.writeFileSync(path.join(paths.botss, "roles.yaml"), rolesText);
   if (!fs.existsSync(paths.config)) {
-    fs.writeFileSync(paths.config, initialConfigYaml(parseRolesYaml(rolesText), { existing }));
+    fs.writeFileSync(paths.config, initialConfigYaml(parseRolesYaml(rolesText), { existing, workspace }));
     created.push(".botss/config.yaml");
   }
   const commonDir = (await git(root, ["rev-parse", "--git-common-dir"])).stdout.trim();

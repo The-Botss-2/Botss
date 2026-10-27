@@ -16,6 +16,7 @@ type Step =
   | { bash: string; allowFail?: boolean }
   | { botss: string[]; allowFail?: boolean }
   | { text: string }
+  | { todo: { content: string; status: string; activeForm?: string }[] }
   | { sleep: number }
   | { hang: true }
   | { usageLimit: { inSeconds?: number } }
@@ -186,6 +187,9 @@ async function main(): Promise<number> {
   for (const s of script.steps) {
     if ("expectPrompt" in s) {
       if (!prompt.includes(expand(s.expectPrompt, ctx))) return finish(true, `fake-claude: prompt did not contain "${s.expectPrompt}"`, 3);
+    } else if ("todo" in s) {
+      // Claude Code's own plan tool: the dashboard shows it as a checklist.
+      tool("TodoWrite", { todos: s.todo }, () => ({ ok: true, output: "Todos updated" }));
     } else if ("text" in s) {
       turns++;
       out({ type: "assistant", session_id: sessionId, message: { role: "assistant", content: [{ type: "text", text: expand(s.text, ctx) }] } });

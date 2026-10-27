@@ -22,7 +22,7 @@ Botss turns Claude Code into a small software company that works for you:
 2. **The PM asks you a short batch of questions**, each with a recommended answer, then writes a PRD (product requirements document) for you to approve.
 3. **The designer proposes 2 to 3 visual directions.** You pick one, and they produce design tokens and screen mockups.
 4. **The tech lead writes the architecture and API contracts**, then a task plan that is checked by code: no dependency cycles, and no two parallel tasks editing the same files.
-5. **You choose the team size**, and the build starts. Engineers work in parallel, each in its own git worktree. Every task goes through **tests → code review → QA → merge**, and the merged result is checked after every merge.
+5. **You choose the team size**, and the build starts. Engineers work in parallel, **directly in your project folder**, like a team sharing one office: each task owns its own files, so nobody steps on anyone else. Every task goes through **tests → code review → QA → done**, and the project's checks run after each one.
 6. **You approve the release** and merge the finished app into your own branch.
 
 Each team member is a headless **Claude Code** process started by Botss. The roles follow plain-markdown playbooks ("skills") that you can read and edit. Everything they do (files edited, commands run, messages, decisions, reviews) streams to a dashboard at `http://127.0.0.1`.
@@ -36,7 +36,9 @@ Each team member is a headless **Claude Code** process started by Botss. The rol
 | 🏠 **Local first** | Runs on your machine, binds to `127.0.0.1`, needs a random access token, and has no telemetry or cloud service. |
 | 🔑 **Your subscription** | Uses the official `claude` CLI with your own login. Botss never reads or stores your credentials and never calls Anthropic APIs directly. |
 | 🧭 **You stay in charge** | Approval gates for the PRD, design, architecture, plan, and release. A kill switch. Agents ask you when something costs money, needs a key, or changes scope. |
-| 🧱 **Real engineering, not vibes** | Contracts before code, test-first tasks, a `verify` command that must pass before a task counts as done, independent code review, QA with bug reports, and serialized merges with integration checks. |
+| 🧱 **Real engineering, not vibes** | Contracts before code, test-first tasks, a `verify` command that must pass before a task counts as done, independent code review, QA with bug reports, and project checks after every finished task. |
+| 👀 **Watch them work** | Each agent's card shows what it is doing in plain words ("Running the tests", "Messaging the frontend engineer"), its own plan as a live checklist with a progress bar, the files it touched, and where its task is (building, review, QA, done). |
+| 🔔 **You hear about what matters** | Pop-up and desktop notifications when something needs your approval, an agent asks you a question, a task is blocked, or a task is done. |
 | 💸 **Quota aware** | A daily token budget with a reserve for your own use, concurrency limits, and an automatic pause and resume when Claude Code hits a usage limit. |
 | ✏️ **Editable team** | Every role's behavior is markdown in [`skills/`](skills/). Change how your PM writes PRDs or how your reviewer judges code, right in the dashboard. |
 
@@ -47,7 +49,7 @@ Each team member is a headless **Claude Code** process started by Botss. The rol
 | Tool | Why | Check |
 |---|---|---|
 | **Node.js 22.18+** | Runs Botss | `node --version` |
-| **Git 2.20+** | Branches and worktrees for each agent | `git --version` |
+| **Git** (any recent version) | Needed by Claude Code on Windows (Git Bash); Botss itself does not use git for your project | `git --version` |
 | **Claude Code**, logged in | The agents ([install](https://docs.claude.com/en/docs/claude-code)), then run `claude` once to log in | `claude --version` |
 | **pnpm** | Installs Botss (ships with Node through corepack) | `corepack pnpm --version` |
 | **Docker** with Compose | Each agent gets its own database for the apps Botss builds | `docker compose version` |
@@ -101,7 +103,7 @@ botss up                # starts Botss and opens the dashboard for this folder
 
 `botss up` prints a link like `http://127.0.0.1:4800/?token=…` and opens it in your browser. Keep that terminal open: **Ctrl+C stops Botss and every agent.** If Botss is already running, `botss up` in another folder just opens the dashboard there.
 
-> 💡 Botss never changes your current branch. It works on a separate `botss/integration` branch and keeps agent worktrees next to your folder in `../.botss-worktrees/`. To remove the global command: `botss setup --uninstall`.
+> 💡 Agents work **directly in the folder you choose**. Botss adds one hidden `.botss` folder (plans, documents, the team's notes) and nothing else: no git repository, branches, or commits. If your folder already uses git, Botss leaves it to you; agents can only read it. To remove the global command: `botss setup --uninstall`.
 
 ---
 
@@ -116,13 +118,9 @@ Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.m
 5. **Design.** Each visual direction comes with a live preview of your main screen, so you choose from something you can see. The designer then produces tokens and a mockup of every screen. **Review the mockups at desktop and mobile sizes and approve the design** (or ask for changes) before any architecture or code is written.
 6. **Architecture.** Review the tech lead's architecture and API contract, then approve it.
 7. **Plan and team.** In **Team builder**, see every task, the dependency graph, the critical path, and an estimate of tokens and time. Pick how many agents per role (more agents than the plan has parallel lanes just wait), then click **Approve plan & start build**.
-8. **Watch the build.** **Agents** shows every working agent live: what it is thinking, each file it edits (with the change), each command it runs and its output, as it happens. On the **Live board**, tasks move from *To do* to *Done*. The **Team feed** shows agents messaging each other, reviews, merges, and blocked actions. If an agent needs a decision from you, it appears in **Questions**.
+8. **Watch the build.** **Agents** shows the team at work: each agent's status in plain words, its own plan as a checklist with a progress bar, the files it touched, and its task's stage. Open **Details** on a card for the full live transcript (reasoning, each edit, each command and its output). On the **Live board**, tasks move from *To do* to *Done*. The **Team feed** shows agents messaging each other, reviews, and blocked actions. Notifications pop up when an agent asks you something, a document needs your approval, a task is blocked, or a task is done (turn on desktop notifications from the bell).
    * **Changed your mind?** Click **Request a change** in the header at any point after the PRD is approved. The PM updates the PRD (you approve), the tech lead updates the plan (you approve), and new tasks join the build. Finished work is kept unless your change says otherwise.
-9. **Release.** QA runs the full suite on the merged branch and Botss writes a release summary. Approve it, then merge the `botss/integration` branch into your main branch when you are ready:
-
-   ```bash
-   git merge botss/integration
-   ```
+9. **Release.** QA runs the full suite on the finished project and Botss writes a release summary. Approve it. Everything is already in your folder.
 
 ---
 
@@ -133,20 +131,21 @@ Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.m
          tokens + screen mockups ──[you approve]──▶
       ─▶ Tech lead: architecture + contracts ──[you approve]──▶ task plan ──[you approve + pick team]──▶
          T000 scaffold ─▶ T001 infra ─▶ parallel tasks:
-                                        engineer (test first, verify) ─▶ reviewer ─▶ QA ─▶ merge + checks
-      ─▶ QA journey tests on the merged branch ─▶ optional security audit ──[you approve]──▶ done
+                                        engineer (test first, verify) ─▶ reviewer ─▶ QA ─▶ done + checks
+      ─▶ QA journey tests on the whole project ─▶ optional security audit ──[you approve]──▶ done
 ```
 
-* **Every agent is a real Claude Code session.** Botss starts `claude -p` in the agent's own git worktree, with that role's skills added to its system prompt, a scoped access token, and its own ports and Docker Compose project, so parallel agents never collide.
+* **Every agent is a real Claude Code session.** Botss starts `claude -p` in your project folder with that role's skills added to its system prompt, a scoped access token, and its own ports and Docker Compose project. Parallel agents never collide: each task owns its files, the scheduler never runs two tasks that own the same file, and a guard hook stops edits outside a task's files.
+* **No git machinery.** Agents don't create branches or commits. To show what a task changed (for review and for you), Botss keeps a copy of the task's files when it starts and diffs against it.
 * **Agents share state only through the `botss` CLI:** `botss task done`, `botss ask @human`, `botss msg @frontend`, `botss review approve`, and so on ([reference](skills/team-protocol/references/botss-cli.md)). The server checks role permissions on every command.
-* **Plain code makes the decisions.** Scheduling, permissions, plan validation, and merging are deterministic code, not an LLM. A task is "done" only when its `verify` command passes. Merges happen one at a time, and if a merge conflicts or the checks fail, the tech lead gets an integration task.
+* **Plain code makes the decisions.** Scheduling, permissions, and plan validation are deterministic code, not an LLM. A task is "done" only when its `verify` command passes, review approves it, and QA passes it. If the project's checks fail afterwards, the tech lead gets a repair task.
 * **Everything is visible.** Each agent's actions, messages, decisions, reviews, and raw output are stored and streamed to the dashboard, and survive a page reload.
 * **Only what you asked for.** Every role follows a scope rule: build exactly what you said and what you approved. Anything an agent thinks is missing becomes a question or a "Later" note you can see, never a silent extra. Reviewers flag unrequested additions.
 * **Token-thrifty teamwork.** Each role's system prompt is identical across runs so Claude Code's prompt cache is reused. Messages are short and capped (details go in files), questions to the same role are answered in one batched run, inboxes are trimmed, and interrupted agents resume their own sessions instead of starting over.
 
 ### Existing projects
 
-Run `botss up` (or `botss init`) inside a folder that already has code. Botss commits the existing code as its starting point if the folder is not a git repo yet, and on your first request the **tech lead surveys the codebase** first: stack, layout, conventions, and the exact test and build commands, written to a short `codebase.md` everyone reads instead of re-exploring. Then the PM plans **only the change you asked for** (a feature or a fix), there is no scaffold, and every merge runs your project's own checks.
+Run `botss up` (or `botss init`) inside a folder that already has code. On your first request the **tech lead surveys the codebase** first: stack, layout, conventions, and the exact test and build commands, written to a short `codebase.md` everyone reads instead of re-exploring. Then the PM plans **only the change you asked for** (a feature or a fix), there is no scaffold, and your project's own checks run after every finished task. Keep a backup (or commit, if you use git) before a big change: agents edit your files directly.
 
 More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code](docs/claude-code-integration.md) · [Security review](docs/security-review.md) · [Design decisions](docs/decisions/)
 
@@ -214,7 +213,7 @@ The header always shows the phase, your quota, open questions, **Pause/Resume**,
 | Command | What it does |
 |---|---|
 | `botss setup [--uninstall]` | Install (or remove) the global `botss` command so it works from any folder |
-| `botss init [folder]` | Make a folder a Botss project (git repo, `.botss/`, skills, `botss/integration` branch) |
+| `botss init [folder]` | Make a folder a Botss project (adds the hidden `.botss/` folder only) |
 | `botss doctor` | Check prerequisites and print fixes. `--login` also confirms Claude Code is logged in (asks first; sends one tiny prompt) |
 | `botss up [--port N] [--no-open]` | Start the server and dashboard on `127.0.0.1` (default port 4800) |
 | `botss status` | Phase, task counts, quota, and working agents for the current project |
@@ -230,13 +229,13 @@ Agents use the same binary for their own commands (`whoami`, `task`, `msg`, `ask
 
 **What agents can and cannot do.** A guard hook runs before every file edit and shell command an agent makes, and blocks it with a clear reason when the agent tries to:
 
-* write outside its own worktree, or outside the files its task owns (the code reviewer can't edit code at all);
-* force-push, push other branches, merge, rebase shared branches, or delete branches or worktrees;
-* delete files outside its worktree, or wipe another agent's Docker volumes;
+* write outside your project folder, or outside the files its task owns (the code reviewer can't edit code at all);
+* change git state (add, commit, reset, checkout, push...) in your project;
+* delete files outside the project folder, or wipe another agent's Docker volumes;
 * call the internet with `curl`/`wget` (localhost only, unless a task allows it);
 * read Claude credentials or touch Botss's own database.
 
-As a backstop, a task cannot be marked done if its branch changes files outside its paths, and only Botss merges. Destructive or paid actions need your approval. Botss is a policy sandbox, not an operating-system sandbox: agents run as your user. For untrusted ideas, run Botss in a VM or container. See the [security review](docs/security-review.md).
+Everything else in the shell is allowed, like in Claude Code, so agents can install packages, run tests, and start the app without being stopped. Destructive or paid actions need your approval. Botss is a policy sandbox, not an operating-system sandbox: agents run as your user. For untrusted ideas, run Botss in a VM or container. See the [security review](docs/security-review.md).
 
 **What it costs.** Every agent run uses your Claude Code subscription (or API billing, if you set that up in Claude Code). You control it with:
 
@@ -256,25 +255,26 @@ Most settings live in the dashboard (**Settings**) and are stored per project:
 |---|---|---|
 | Max concurrent agents | 3 | Total agents running at once |
 | Daily token budget / reserve | 10M / 20% | Botss uses at most 80% of the budget |
-| Approval gates | all on | PRD, design direction, architecture, plan, release; each can auto-approve |
+| Approval gates | all on | PRD, design direction, screen designs, architecture, plan, release; each can auto-approve |
 | Models per role | Claude Code default | For example a stronger model for the tech lead and a faster one for the reviewer |
 | Max turns per role, run timeout | 80 turns / 45 min | Runaway guards |
-| Permission mode | `dontAsk` + allowlist | `bypassPermissions` is available with a warning; the guard hook always runs |
-| Check commands | from the scaffold | Run on the integration branch after every merge |
+| Permission mode | `dontAsk`, shell allowed | Claude Code's tools are allowed; the Botss guard hook decides what is unsafe. `bypassPermissions` is available with a warning |
+| Check commands | from the scaffold or codebase survey | Run on the project after every finished task |
 | QA per task, security audit | on / off | |
 
-Role definitions, write paths, and the default stack are in [`roles.yaml`](roles.yaml). Role behavior is in [`skills/`](skills/), copied into each project at `botss init`; edit a project's copy in **Settings → Skills** (with reset to default).
+Role definitions, write paths, and the default stack are in [`roles.yaml`](roles.yaml). Role behavior is in [`skills/`](skills/). To change it for one project, edit it in **Settings → Skills** (with reset to default); the project then gets its own copy in `.botss/skills/`.
 
 ### Where Botss keeps things in your project
 
 ```
-my-app/                        your repo (your branch is never modified)
-  .botss/botss.db              board state (local only, never committed)
-  .botss/config.yaml           initial settings
-  .botss/runs/<run>/           each agent run's prompt and raw output
-../.botss-worktrees/my-app/
-  _integration/                the botss/integration branch: skills, docs (PRD, architecture, contracts, design), tasks, and the app
-  backend-1-T012/              one worktree per task, removed after merge
+my-app/                    your project: the agents' code goes here, like any developer's
+  .botss/                  Botss's one hidden folder
+    botss.db               the task board, messages, reviews, and history
+    docs/                  PRD, design, architecture, contracts, decisions
+    tasks/                 the task plan
+    handoffs/, reviews/    the team's notes
+    snapshots/             copies of each task's files from when it started (for "what changed")
+    runs/                  each agent run's prompt and raw output
 ```
 
 ---
@@ -336,7 +336,7 @@ corepack pnpm --filter @botss/dashboard dev    # dashboard dev server (proxies t
 | Package | |
 |---|---|
 | `packages/core` | Pure logic: plan validation, collision checks, scheduler, permissions, guard, stream parsing, database schema |
-| `packages/server` | API, WebSocket events, orchestrator, agent runner, git worktrees |
+| `packages/server` | API, WebSocket events, orchestrator, agent runner, snapshots (plus an optional isolated git-worktree mode) |
 | `packages/cli` | The `botss` command (owner and agent commands, guard hook) |
 | `packages/dashboard` | React + Vite + Tailwind dashboard |
 | `packages/fake-claude` | A stand-in for `claude` used by every test |

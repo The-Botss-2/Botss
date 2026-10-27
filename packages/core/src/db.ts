@@ -250,6 +250,15 @@ CREATE TABLE counters (
 );
 `,
   },
+  {
+    id: 2,
+    name: "live progress: agent plans and activities",
+    sql: `
+ALTER TABLE runs ADD COLUMN todos TEXT;
+ALTER TABLE runs ADD COLUMN activity TEXT;
+ALTER TABLE agents ADD COLUMN activity TEXT;
+`,
+  },
 ];
 
 export type Row = Record<string, any>;

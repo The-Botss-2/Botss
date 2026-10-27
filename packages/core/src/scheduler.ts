@@ -12,6 +12,8 @@ export interface SchedTask {
   owns: string[];
   /** A run for this task is currently active. */
   running: boolean;
+  /** Direct mode: the task's unfinished edits are in the shared folder (in review, QA, ...), so its files stay taken. */
+  occupies?: boolean;
   /** Set when the task waits on a question, a cooldown, or the owner. */
   hold?: boolean;
   /** Lower runs first. */
@@ -70,7 +72,7 @@ export function schedule(input: SchedInput): SchedAction[] {
   const running = { ...input.runningByRole };
   let total = Object.values(running).reduce((a, b) => a + (b ?? 0), 0);
   // Owned paths of tasks with an active implementation-type run, for the defense-in-depth overlap check.
-  const activeOwns = input.tasks.filter((t) => t.running).map((t) => ({ id: t.id, owns: t.owns }));
+  const activeOwns = input.tasks.filter((t) => t.running || t.occupies).map((t) => ({ id: t.id, owns: t.owns }));
 
   const candidates = input.tasks
     .filter((t) => !t.running && !t.hold)

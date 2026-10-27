@@ -31,8 +31,8 @@ describe("botss init", () => {
     fs.mkdirSync(path.join(b, "node_modules", "x"), { recursive: true });
     fs.writeFileSync(path.join(b, "node_modules", "x", "i.js"), "");
 
-    const ra = await initProject(a);
-    const rb = await initProject(b);
+    const ra = await initProject(a, { workspace: "isolated" });
+    const rb = await initProject(b, { workspace: "isolated" });
 
     // Each project is the root of its own repository.
     for (const p of [a, b]) {

@@ -31,6 +31,7 @@ import {
   removeWorktree,
 } from "./git.ts";
 import { cliCommand, quoteArg } from "./paths.ts";
+import { snapshotDir, snapshotDiff, takeSnapshot } from "./snapshot.ts";
 import { agentRuntimeEnv, allocatePortBlock } from "./ports.ts";
 import type { Project } from "./project.ts";
 import { buildRunPrompt, buildSystemPrompt, roleTitle } from "./prompts.ts";
@@ -173,6 +174,7 @@ export class Orchestrator {
         after: t.after,
         owns: t.owns,
         running: runningTasks.has(t.id) || this.finalizing.has(t.id),
+        occupies: this.p.direct && ["in_progress", "review", "qa", "changes_requested", "blocked"].includes(t.status),
         // Build tasks wait for plan approval; planning and answer tasks run in any phase.
         hold:
           Boolean(t.hold) ||
@@ -254,6 +256,14 @@ export class Orchestrator {
     t: TaskRow,
     agent: string,
   ): Promise<{ cwd: string; branch: string; shared: boolean }> {
+    if (this.p.direct) {
+      // Direct mode: everyone works in the project folder. Keep a copy of a build task's files on its first run
+      // so reviewers (and the owner) can see what it changed.
+      if (["build", "integrate", "release"].includes(t.kind)) {
+        takeSnapshot(this.p.paths.root, [...t.owns, ...t.may_touch], snapshotDir(this.p.paths.botss, t.id));
+      }
+      return { cwd: this.p.paths.root, branch: "", shared: true };
+    }
     const integ = this.p.paths.integration;
     if ((t.kind === "planning" || t.kind === "answer") && !this.buildStarted()) {
       return { cwd: integ, branch: INTEGRATION_BRANCH, shared: true };
@@ -292,7 +302,8 @@ export class Orchestrator {
     let stat: string | null = null;
     if (stage === "review" || stage === "verify") {
       handoff = this.svc.handoffs(t.id).at(-1)?.content ?? null;
-      if (t.base_sha) stat = await diffStat(ws.cwd, t.base_sha);
+      if (this.p.direct) stat = this.taskDiff(t).stat;
+      else if (t.base_sha) stat = await diffStat(ws.cwd, t.base_sha);
       if (stage === "verify") {
         const rv = this.svc.reviews(t.id).at(-1);
         if (rv?.summary) extra.push(`## Review verdict\n\n${rv.verdict}: ${rv.summary}`);
@@ -353,7 +364,7 @@ export class Orchestrator {
     const systemFile = path.join(dir, "system.md");
     fs.writeFileSync(
       systemFile,
-      buildSystemPrompt({ roleTitle: roleTitle(this.p.roles, o.role), project: this.p.paths.name, skills, skillsDir: this.p.skillsDir() }),
+      buildSystemPrompt({ roleTitle: roleTitle(this.p.roles, o.role), project: this.p.paths.name, skills, skillsDir: this.p.skillsDir(), direct: this.p.direct }),
     );
     fs.writeFileSync(path.join(dir, "prompt.md"), o.prompt);
     const a = this.svc.agent(o.agent)!;
@@ -374,6 +385,7 @@ export class Orchestrator {
           homeDir: os.homedir(),
           allowNetwork: o.allowNetwork,
           allowMerge: o.allowMerge,
+          direct: this.p.direct,
         },
         null,
         2,
@@ -524,9 +536,16 @@ export class Orchestrator {
             ev = { ...ev, file: r, summary: ev.summary.replace(ev.file, r) };
           }
         }
-        this.svc.updateAgent(run.agent, { last_action: ev.summary, last_file: ev.file ?? null });
-        this.svc.updateRun(run.runId, { last_action: ev.summary, last_file: ev.file ?? null });
-        this.svc.emit("run.tool", ev.summary, { tool: ev.tool, file: ev.file ?? null, input: ev.input, toolUseId: ev.toolUseId ?? null }, meta);
+        // Plain-language status for the dashboard ("Running the tests"), with the technical summary in the feed.
+        this.svc.updateAgent(run.agent, { last_action: ev.label, last_file: ev.file ?? null, activity: ev.activity });
+        this.svc.updateRun(run.runId, { last_action: ev.label, last_file: ev.file ?? null, activity: ev.activity });
+        this.svc.emit(
+          "run.tool",
+          ev.summary,
+          { tool: ev.tool, file: ev.file ?? null, input: ev.input, toolUseId: ev.toolUseId ?? null, activity: ev.activity, label: ev.label },
+          meta,
+        );
+        if (ev.tool === "TodoWrite") this.svc.updateRun(run.runId, { todos: JSON.stringify(ev.input.todos ?? []) });
         break;
       case "text": {
         const one = ev.text.replace(/\s+/g, " ");
@@ -736,7 +755,13 @@ export class Orchestrator {
     return ["build", "release_review", "done"].includes(this.svc.phase) || this.svc.tasks({ kind: ["build"] }).some((t) => t.status !== "todo");
   }
 
+  /** Direct mode: what a task changed since its first run (files and a unified diff). */
+  taskDiff(t: TaskRow): { files: { path: string; status: string }[]; diff: string; stat: string } {
+    return snapshotDiff(this.p.paths.root, [...t.owns, ...t.may_touch], snapshotDir(this.p.paths.botss, t.id));
+  }
+
   private async commitIntegration(message: string): Promise<void> {
+    if (this.p.direct) return;
     const integ = this.p.paths.integration;
     // Never pick up merge leftovers: only planning output paths.
     await commitAll(integ, message, ["-A", "--", ".botss/docs", ".botss/tasks"]).catch(() => false);
@@ -848,7 +873,7 @@ export class Orchestrator {
       throw new Error(`the idea can only be submitted in the idea phase (now ${this.svc.phase})`);
     const existing = this.svc.settings.existing;
     const kind = input.kind ?? (existing ? "feature" : "new");
-    const integ = this.p.paths.integration;
+    const integ = this.p.sharedDir();
     const docs = path.join(integ, ".botss/docs");
     fs.mkdirSync(path.join(docs, "attachments"), { recursive: true });
     const names = this.saveAttachments(path.join(docs, "attachments"), input.attachments ?? []);
@@ -863,7 +888,7 @@ export class Orchestrator {
       names.length ? `## Attachments\n\n${names.map((n) => `- .botss/docs/attachments/${n}`).join("\n")}\n` : "",
     ].join("\n");
     fs.writeFileSync(path.join(docs, "idea.md"), md);
-    await commitAll(integ, "botss: owner idea", ["-A", "--", ".botss/docs"]);
+    if (!this.p.direct) await commitAll(integ, "botss: owner idea", ["-A", "--", ".botss/docs"]);
     this.svc.patchState({ idea: { text: input.text, stakes: input.stakes, links: input.links ?? [], attachments: names, kind } });
     this.svc.submitDoc("idea", ".botss/docs/idea.md", md, "human", null, "approved");
     this.svc.emit("idea.submitted", existing ? `Owner asked for a ${kind} in the existing codebase` : "Owner submitted the idea", { attachments: names.length, kind }, { actor: "human" });
@@ -1250,6 +1275,7 @@ export class Orchestrator {
   private async merge(taskId: string): Promise<void> {
     const t = this.svc.task(taskId);
     if (!t || t.status === "done") return;
+    if (this.p.direct) return this.finishDirect(t);
     const integ = this.p.paths.integration;
     const branch = t.branch;
     if (!branch) {
@@ -1315,6 +1341,49 @@ export class Orchestrator {
       { task: t.id },
     );
     await this.afterMerged(t);
+  }
+
+  /**
+   * Direct mode "merge": the work is already in the project folder. Run the project's checks; if they fail,
+   * the task still counts as done (its own verify passed) and the tech lead gets a repair task.
+   */
+  private async finishDirect(t: TaskRow): Promise<void> {
+    const changed = ["build", "integrate", "release"].includes(t.kind) ? this.taskDiff(t).files : [];
+    this.svc.setStatus(t.id, "done", { force: true, reason: "finished", extra: { hold: null } });
+    this.svc.emit(
+      "merge.ok",
+      `${t.id} finished${changed.length ? `: ${changed.length} file(s) changed` : ""}`,
+      { files: changed.slice(0, 50) },
+      { task: t.id },
+    );
+    const checks = this.svc.settings.checks;
+    for (const cmd of checks) {
+      const res = await runShell(cmd, {
+        cwd: this.p.paths.root,
+        env: this.envFor(await this.integrationAgent(), {}),
+        timeoutMs: this.svc.settings.verify_timeout_minutes * 60_000,
+      });
+      if (res.code !== 0) {
+        this.svc.emit("checks.failed", `Project checks failed after ${t.id}: \`${cmd}\``, { command: cmd, output: res.output.slice(-4000) }, { task: t.id });
+        const id = this.svc.nextId("I");
+        this.svc.createTask({
+          id,
+          kind: "integrate",
+          mode: "repair",
+          title: `Repair checks after ${t.id}`,
+          role: "tech-lead",
+          status: "ready",
+          priority: 0,
+          owns: changed.length ? changed.map((c) => c.path) : t.owns,
+          verify: checks.join(" && "),
+          parent: null,
+          body: `The project's checks failed after ${t.id} (${t.title}) finished.\n\n\`\`\`\n$ ${cmd}\n${res.output.slice(-3000)}\n\`\`\`\n\nFiles ${t.id} changed: ${changed.map((c) => c.path).join(", ") || "(see its handoff)"}\n\n## Handoff of ${t.id}\n\n${this.svc.handoffs(t.id).at(-1)?.content ?? "(none)"}`,
+        });
+        this.svc.alert(`Checks failed after ${t.id}. Repair task ${id} was created for the tech lead.`, t.id);
+        break;
+      }
+    }
+    await this.afterMerged(this.svc.task(t.id)!);
   }
 
   private async integrationAgent(): Promise<string> {
@@ -1478,8 +1547,10 @@ export class Orchestrator {
   async submitReleaseSummary(): Promise<void> {
     if (this.svc.doc("release")?.status === "submitted") return;
     const tasks = this.svc.tasks({ kind: ["build", "integrate", "release"] });
-    const integ = this.p.paths.integration;
-    const log = (await git(integ, ["log", "--oneline", "-n", "40"], { reject: false })).stdout;
+    const integ = this.p.sharedDir();
+    const log = this.p.direct
+      ? tasks.filter((x) => x.status === "done").map((x) => `${x.id} ${x.title}`).join("\n")
+      : (await git(integ, ["log", "--oneline", "-n", "40"], { reject: false })).stdout;
     const t1 = this.svc.handoffs("T001").at(-1)?.content ?? this.svc.handoffs("T000").at(-1)?.content ?? "";
     const qa = this.svc.qaReports("REL-QA").at(-1)?.content ?? "";
     const usage = this.svc.usage(30);
@@ -1603,7 +1674,7 @@ export class Orchestrator {
         : action === "stop"
           ? "docker compose down"
           : "docker compose down -v && docker compose up -d --build";
-    const r = await runShell(cmd, { cwd: this.p.paths.integration, env, timeoutMs: 15 * 60_000 });
+    const r = await runShell(cmd, { cwd: this.p.sharedDir(), env, timeoutMs: 15 * 60_000 });
     this.svc.patchState({ previewRunning: action !== "stop" && r.code === 0 });
     this.svc.emit(
       "preview.changed",

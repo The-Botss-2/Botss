@@ -18,6 +18,7 @@ import { diffNames, headSha, lsFiles, statusPorcelain } from "./git.ts";
 import type { Project } from "./project.ts";
 import { ServiceError, type TaskRow } from "./service.ts";
 import { runShell } from "./shell.ts";
+import { walkFiles } from "./snapshot.ts";
 
 // Semantics of every agent command in skills/team-protocol/references/botss-cli.md. The CLI is a thin client:
 // it reads scratch files locally and sends their content; all checks and state changes happen here.
@@ -86,6 +87,11 @@ export class Commands {
   }
 
   // ---------------------------------------------------------------------------------- orientation
+
+  /** Files in the project, for the conservative ownership-collision check. */
+  private async projectFiles(): Promise<string[]> {
+    return this.p.direct ? walkFiles(this.p.paths.root) : lsFiles(this.p.paths.integration);
+  }
 
   whoami(id: Identity): CmdResult {
     if (id.kind === "human") return { text: "agent: human (owner)", data: { agent: "human", role: null } };
@@ -181,18 +187,21 @@ export class Commands {
     const t = this.svc.mustTask(taskId);
     if (!["in_progress", "ready", "changes_requested"].includes(t.status)) throw new ServiceError(`${t.id} is ${t.status}; only a task in progress can be handed off`, 2);
     const actor = this.actor(id).agent;
-    const cwd = t.worktree ?? this.svc.run(id.kind === "agent" ? id.runId : "")?.cwd;
+    const direct = this.p.direct;
+    const cwd = direct ? this.p.paths.root : (t.worktree ?? this.svc.run(id.kind === "agent" ? id.runId : "")?.cwd);
     if (!cwd || !fs.existsSync(cwd)) throw new ServiceError(`no worktree for ${t.id}`, 2);
 
-    // 1. Owned work must be committed (scratch folders excluded).
+    // 1. Isolated mode: owned work must be committed (scratch folders excluded). Direct mode has no commits.
     const owned = [...t.owns, ...t.may_touch];
-    const dirty = (await statusPorcelain(cwd)).filter((f) => !f.file.startsWith(".botss/handoffs/") && !f.file.startsWith(".botss/reviews/") && !f.file.startsWith(".botss/screens/") && matchesAny(owned, f.file));
+    const dirty = direct
+      ? []
+      : (await statusPorcelain(cwd)).filter((f) => !f.file.startsWith(".botss/handoffs/") && !f.file.startsWith(".botss/reviews/") && !f.file.startsWith(".botss/screens/") && matchesAny(owned, f.file));
     if (dirty.length) {
       return { exit: 1, text: `Refused: commit your owned work first. Uncommitted:\n${dirty.map((d) => `  ${d.code} ${d.file}`).join("\n")}` };
     }
     // Backstop for edits the hook cannot see (for example a shell redirect): the branch diff must stay inside
     // the task's paths. Integrate tasks merge whole task branches, so they are exempt.
-    if (t.base_sha && t.kind !== "integrate") {
+    if (!direct && t.base_sha && t.kind !== "integrate") {
       const role = (id.kind === "agent" ? id.role : t.role) as Role;
       const allowed = this.p.orch.writableFor(t, role, "implement");
       const outside = (await diffNames(cwd, t.base_sha)).filter((f) => !matchesAny(allowed, f));
@@ -204,7 +213,7 @@ export class Commands {
       }
     }
     // 2. Ingest the handoff.
-    const head = await headSha(cwd);
+    const head = direct ? null : await headSha(cwd);
     // 3. Verify for DONE / DONE_WITH_CONCERNS.
     let verifyOut: string | null = null;
     if (status !== "NEEDS_CONTEXT" && t.verify.trim()) {
@@ -397,7 +406,7 @@ export class Commands {
     const d = this.svc.doc(name);
     if (d?.content) return { text: d.content, data: { name, status: d.status, version: d.version, path: d.path, content: d.content } };
     const rel = docPath(name);
-    const f = path.join(this.p.paths.integration, rel);
+    const f = path.join(this.p.sharedDir(), rel);
     if (fs.existsSync(f) && fs.statSync(f).isFile()) {
       const content = fs.readFileSync(f, "utf8");
       return { text: content, data: { name, status: "draft", version: 0, path: rel, content } };
@@ -418,7 +427,7 @@ export class Commands {
 
   async planCheck(id: Identity, files: { file: string; source: string }[]): Promise<CmdResult> {
     this.must(id, "read");
-    const repoFiles = await lsFiles(this.p.paths.integration);
+    const repoFiles = await this.projectFiles();
     const r = checkPlan(files, repoFiles);
     const stats = r.tasks.length ? planStats(r.tasks) : null;
     if (!r.ok) {
@@ -434,7 +443,7 @@ export class Commands {
     this.must(id, "plan.submit");
     const check = await this.planCheck(id, files);
     if (check.exit) return { ...check, text: `${check.text}\nNot imported. Fix the problems and run \`botss plan submit\` again.` };
-    const r = checkPlan(files, await lsFiles(this.p.paths.integration));
+    const r = checkPlan(files, await this.projectFiles());
     const a = this.actor(id);
     // During a change request the new plan waits for the owner's approval before anything new starts.
     this.svc.importPlan(r.tasks, a.agent, this.p.orch.activeChange()?.status === "replan" ? "plan" : null);

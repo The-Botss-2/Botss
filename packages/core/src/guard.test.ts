@@ -126,6 +126,25 @@ describe("guard: bash", () => {
   });
 });
 
+describe("guard: direct workspace mode", () => {
+  const direct = { ...ctx, direct: true };
+  it.each([
+    ["git status", true],
+    ["git diff HEAD -- backend/app/api/orders.py", true],
+    ["git log --oneline -5", true],
+    ["git branch --show-current", true],
+    ["git add -A", false],
+    ["git commit -m x", false],
+    ["git stash", false],
+    ["git checkout -- backend/app/models/order.py", false],
+    ["git reset --hard", false],
+    ["npm install && npm test", true],
+    ["cd frontend && npx vitest run | tail -20", true],
+  ])("%s -> %s", (command, ok) => {
+    expect(guardDecision(bash(command), direct).allow).toBe(ok);
+  });
+});
+
 describe("splitCommands", () => {
   it("splits on operators and respects quotes", () => {
     expect(splitCommands(`git commit -m "a && b"; ls | wc -l`)).toEqual([["git", "commit", "-m", "a && b"], ["ls"], ["wc", "-l"]]);

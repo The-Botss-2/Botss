@@ -403,6 +403,10 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       human(req);
       const p = project(req);
       const t = p.svc.mustTask((req.params as { id: string }).id);
+      if (p.direct) {
+        const d = p.orch.taskDiff(t);
+        return { diff: d.diff.slice(0, 2_000_000), files: d.files, base: "start of task", head: "now" };
+      }
       if (!t.base_sha || !t.branch) return { diff: "" };
       const r = await git(p.paths.root, ["diff", "--no-color", `${t.base_sha}...${t.head_sha ?? t.branch}`], { reject: false });
       return { diff: r.stdout.slice(0, 2_000_000), base: t.base_sha, head: t.head_sha ?? t.branch };
@@ -575,6 +579,15 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       return { run, items: items.slice(-1500) };
     }),
   );
+  // Notifications are the events that carry data.notify (questions, approvals, blocked/finished tasks, alerts).
+  app.get(
+    "/api/projects/:pid/notifications",
+    wrap((req) => {
+      human(req);
+      const q = req.query as { after?: string; limit?: string };
+      return project(req).svc.events({ notify: true, after: q.after ? Number(q.after) : undefined, limit: q.limit ? Number(q.limit) : 200 });
+    }),
+  );
   app.get(
     "/api/projects/:pid/events",
     wrap((req) => {
@@ -655,7 +668,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
     wrap((req) => {
       human(req);
       const p = project(req);
-      const base = path.join(p.paths.integration, ".botss/docs");
+      const base = path.join(p.sharedDir(), ".botss/docs");
       const screensDir = path.join(base, "design/screens");
       const screens = fs.existsSync(screensDir) ? fs.readdirSync(screensDir).filter((f) => /\.(html|md)$/.test(f)).sort() : [];
       const tokensFile = path.join(base, "contracts/design-tokens.json");
@@ -680,7 +693,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       const name = q.name ?? "";
       if (!/^[A-Za-z0-9._-]+\.(html|md)$/.test(name)) throw new ServiceError("bad screen name", 2);
       const sub = q.dir === "directions" ? "directions" : "screens";
-      const f = safeJoin(path.join(p.paths.integration, ".botss/docs/design", sub), name);
+      const f = safeJoin(path.join(p.sharedDir(), ".botss/docs/design", sub), name);
       if (!f || !fs.existsSync(f)) throw new ServiceError("not found", 404);
       // Served as text and rendered by the dashboard in a sandboxed iframe (srcdoc, no allow-same-origin).
       return reply.header("content-type", "text/plain; charset=utf-8").header("content-security-policy", "sandbox").send(fs.readFileSync(f, "utf8"));
@@ -688,7 +701,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
   );
 
   // ---------------------------------------------------------------------------------- skills
-  const skillsBase = (p: Project) => path.join(p.paths.integration, ".botss/skills");
+  const skillsBase = (p: Project) => p.skillsDir();
   const listFiles = (dir: string, prefix = ""): string[] =>
     fs.existsSync(dir)
       ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? listFiles(path.join(dir, e.name), `${prefix}${e.name}/`) : e.isFile() ? [`${prefix}${e.name}`] : []))
@@ -722,11 +735,11 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       human(req);
       const p = project(req);
       const b = z.object({ path: z.string().regex(/^[A-Za-z0-9._\-/]+\.(md|json|yaml|yml|txt)$|Makefile$|env\.example$/), content: z.string().max(400_000) }).parse(req.body);
-      const f = safeJoin(skillsBase(p), b.path);
+      const f = safeJoin(p.editableSkillsDir(), b.path);
       if (!f) throw new ServiceError("invalid path", 2);
       fs.mkdirSync(path.dirname(f), { recursive: true });
       fs.writeFileSync(f, b.content);
-      await commitAll(p.paths.integration, `botss: owner edited skill ${b.path}`, ["-A", "--", ".botss/skills"]);
+      if (!p.direct) await commitAll(p.paths.integration, `botss: owner edited skill ${b.path}`, ["-A", "--", ".botss/skills"]);
       p.svc.emit("skills.updated", `Owner edited skill file ${b.path}`, { path: b.path }, { actor: "human" });
       return { ok: true };
     }),
@@ -738,10 +751,10 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       const p = project(req);
       const rel = z.object({ path: z.string() }).parse(req.body).path;
       const src = safeJoin(SKILLS_SOURCE, rel);
-      const dst = safeJoin(skillsBase(p), rel);
+      const dst = safeJoin(p.editableSkillsDir(), rel);
       if (!src || !dst || !fs.existsSync(src)) throw new ServiceError("no default for that file", 404);
       fs.copyFileSync(src, dst);
-      await commitAll(p.paths.integration, `botss: reset skill ${rel} to default`, ["-A", "--", ".botss/skills"]);
+      if (!p.direct) await commitAll(p.paths.integration, `botss: reset skill ${rel} to default`, ["-A", "--", ".botss/skills"]);
       p.svc.emit("skills.updated", `Owner reset ${rel} to the default`, { path: rel }, { actor: "human" });
       return { ok: true };
     }),
