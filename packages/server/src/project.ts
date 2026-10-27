@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { EventBus } from "./bus.ts";
 import { Commands } from "./commands.ts";
-import { ensureWorktree, INTEGRATION_BRANCH } from "./git.ts";
+import { ensureWorktree, git, INTEGRATION_BRANCH } from "./git.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { CLI_ENTRY, NODE_FLAGS, ProjectPaths, ROLES_SOURCE, SKILLS_SOURCE } from "./paths.ts";
 import { ClaudeRunner, type AgentRunner } from "./runner.ts";
@@ -54,6 +54,15 @@ export class Project {
   }
 
   static async open(root: string, ctx: ProjectContext): Promise<Project> {
+    // Refuse projects that live inside someone else's repository (made by older Botss versions): they would
+    // share branches with every other project in that repository.
+    const top = await git(path.resolve(root), ["rev-parse", "--show-toplevel"], { reject: false });
+    const norm = (x: string) => path.resolve(x).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    if (top.code !== 0 || norm(top.stdout.trim()) !== norm(root)) {
+      throw new Error(
+        `${root} is not the root of its own git repository${top.code === 0 ? ` (it is inside ${top.stdout.trim()})` : ""}. Run \`botss init\` in it again to give it its own repository.`,
+      );
+    }
     const p = new Project(root, ctx);
     await ensureWorktree(p.paths.root, p.paths.integration, INTEGRATION_BRANCH, INTEGRATION_BRANCH);
     return p;

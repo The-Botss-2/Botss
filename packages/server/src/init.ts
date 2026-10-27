@@ -1,7 +1,7 @@
 import { initialConfigYaml, parseRolesYaml } from "@botss/core";
 import fs from "node:fs";
 import path from "node:path";
-import { branchExists, commitAll, ensureWorktree, git, hasCommits, INTEGRATION_BRANCH, isRepo } from "./git.ts";
+import { branchExists, commitAll, ensureWorktree, git, hasCommits, INTEGRATION_BRANCH } from "./git.ts";
 import { ProjectPaths, ROLES_SOURCE, SKILLS_SOURCE } from "./paths.ts";
 import { addToRegistry } from "./registry.ts";
 
@@ -53,6 +53,33 @@ function copyDir(src: string, dst: string): void {
   }
 }
 
+/** Never committed when Botss adopts an existing folder: secrets, and folders that are rebuilt anyway. */
+const SECRET_AND_HEAVY = [
+  "# botss: never commit secrets or build output",
+  ".env",
+  ".env.*",
+  "!.env.example",
+  "*.pem",
+  "*.key",
+  "*.p12",
+  "*.pfx",
+  "*.keystore",
+  "id_rsa*",
+  "id_ed25519*",
+  "node_modules/",
+  ".venv/",
+  "venv/",
+  "__pycache__/",
+  "dist/",
+  "build/",
+  ".next/",
+];
+
+function samePath(a: string, b: string): boolean {
+  const n = (p: string) => path.resolve(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return n(a) === n(b);
+}
+
 export async function initProject(root0: string, opts: { skillsSource?: string; rolesSource?: string } = {}): Promise<InitResult> {
   const root = path.resolve(root0);
   const paths = new ProjectPaths(root);
@@ -63,19 +90,22 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
   const existing = fs.readdirSync(root).some((n) => !n.startsWith("."));
   const warnings: string[] = [];
 
-  if (!(await isRepo(root))) {
+  // Every Botss project is its own repository. A folder that merely sits inside another repository (for
+  // example a projects folder that is itself a git repo) gets a nested repo of its own, so projects never
+  // share branches and Botss never commits into the parent repo.
+  const top = await git(root, ["rev-parse", "--show-toplevel"], { reject: false });
+  const isOwnRepo = top.code === 0 && samePath(top.stdout.trim(), root);
+  if (!isOwnRepo) {
     await git(root, ["init", "-b", "main"]);
-    created.push("git repository");
+    created.push(top.code === 0 ? `its own git repository (the folder was inside ${top.stdout.trim()}, which Botss leaves alone)` : "git repository");
   }
   if (!(await hasCommits(root))) {
     if (existing) {
-      // Agents work from git, so the existing code must be in the first commit. Keep heavy folders out
-      // when the project has no .gitignore of its own.
-      if (!fs.existsSync(path.join(root, ".gitignore"))) {
-        const ex = path.join(root, ".git", "info", "exclude");
-        fs.mkdirSync(path.dirname(ex), { recursive: true });
-        fs.appendFileSync(ex, "\nnode_modules/\n.venv/\nvenv/\n__pycache__/\ndist/\nbuild/\n.next/\n.env\n");
-      }
+      // Agents work from git, so the existing code must be in the first commit. Secrets and heavy folders
+      // stay out (even when the project's .gitignore forgets them).
+      const ex = path.join(root, ".git", "info", "exclude");
+      fs.mkdirSync(path.dirname(ex), { recursive: true });
+      fs.appendFileSync(ex, `\n${SECRET_AND_HEAVY.join("\n")}\n`);
       await git(root, ["add", "-A", "--", ".", ":(exclude).botss"]);
       await git(root, ["commit", "--allow-empty", "-m", "Initial commit (existing code, added by botss init)"]);
       created.push("initial commit of your existing code");
