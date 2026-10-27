@@ -4,7 +4,7 @@ This repository is **Botss**, a local-first AI software team that runs on the us
 
 ## Setup flow
 
-Explain each step in one or two sentences before you run it. **Ask before installing anything system-wide** (global npm packages, Docker, uv, Node versions, `npm link`). Never read or touch `~/.claude` or any credentials. Do not start real Botss agent runs for the user; `botss up` and the dashboard are where they start a project.
+Explain each step in one or two sentences before you run it. **Ask before installing anything system-wide** (global npm packages, Docker, uv, Node versions, shell profile edits). Never read or touch `~/.claude` or any credentials. Do not start real Botss agent runs for the user; `botss up` and the dashboard are where they start a project.
 
 1. **Check prerequisites.** Run `node --version` (needs 22.18+) and `git --version`. If Node is fine, run `node --disable-warning=ExperimentalWarning packages/cli/src/main.ts doctor`. That doesn't need dependencies yet, but it may fail to import before `pnpm install`; if it does, do step 2 first and run `doctor` afterwards. For anything missing, explain what it is for and offer the fix; install only with the user's OK:
    * pnpm: `corepack enable` (ships with Node; may need admin rights, so ask first). Without it, use `corepack pnpm …` everywhere.
@@ -12,9 +12,10 @@ Explain each step in one or two sentences before you run it. **Ask before instal
    * Claude Code must be installed and logged in (`claude` once, interactively, by the user). `botss doctor --login` checks the login with one tiny prompt and asks first.
 2. **Install and build:** `pnpm install && pnpm build` (or `corepack pnpm install && corepack pnpm build`). This installs dependencies and builds the dashboard. Nothing else needs compiling, because Node runs the TypeScript directly.
 3. **Make `botss` available.** Offer the options and let the user choose:
-   * `npm link ./packages/cli` (global symlink; ask first), or
-   * a shell alias: `alias botss="node --disable-warning=ExperimentalWarning <repo>/packages/cli/src/main.ts"` (add it to their shell profile only if they agree), or
-   * just run `pnpm botss <command>` from this folder.
+   * macOS / Linux: an alias `alias botss="node <repo>/packages/cli/bin/botss.js"` in `~/.zshrc` or `~/.bashrc` (only if they agree to editing their profile), or
+   * Windows PowerShell: a function `function botss { node "<repo>\packages\cli\bin\botss.js" @args }` in `$PROFILE` (same), or
+   * no profile change: run `node <repo>/packages/cli/bin/botss.js <command>` directly.
+   Do not use `npm link`: the workspace's `workspace:*` dependencies are pnpm-only.
 4. **Initialize their project:** ask which folder the app should live in (new or existing), then `botss init <folder>`. This creates `.botss/`, copies the skills, and creates the `botss/integration` branch and its worktree next to the folder (`../.botss-worktrees/`). The user's current branch is never modified.
 5. **Start Botss:** `cd <folder> && botss up`. It prints and opens `http://127.0.0.1:4800/?token=…`. Tell the user to keep that terminal open (Ctrl+C stops Botss and every agent), then describe their idea on the Idea screen.
 

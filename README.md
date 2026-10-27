@@ -1,117 +1,344 @@
+<div align="center">
+
 # Botss
 
-**Your own AI software team, running on your machine, on your own Claude Code subscription.**
+**An AI software team that runs on your own machine, on your own Claude Code subscription.**
 
-Describe an app idea. Botss asks you a few sharp questions, writes a PRD, and then a team of agents (product manager, tech lead, designer, backend, frontend, QA, code reviewer, DevOps, and optionally security) designs, plans, and builds it in parallel. Each agent is a headless Claude Code process working in its own git worktree. A live dashboard on `127.0.0.1` shows everything as it happens and lets you approve, answer, steer, pause, and stop.
+You describe an app. A product manager, tech lead, designer, backend and frontend engineers, QA, a code reviewer, and DevOps plan it with you and build it in parallel, while you watch everything on a live dashboard and approve each step.
+
+[Quickstart](#quickstart) · [How it works](#how-it-works) · [Your first build](#your-first-build) · [Dashboard tour](#dashboard-tour) · [Safety and cost](#safety-and-cost) · [FAQ](#faq)
 
 ![The Botss live board](docs/screenshots/board-light.png)
 
-<details><summary>More screens: team feed, questions, documents, team builder</summary>
+</div>
 
-![Team feed](docs/screenshots/feed-dark.png)
-![Questions](docs/screenshots/questions.png)
-![Documents](docs/screenshots/docs-prd.png)
-![Team builder](docs/screenshots/team-builder.png)
+---
 
-</details>
+## What is Botss?
 
-* **Local first.** The server binds to `127.0.0.1`, every request needs a random token, and there is no telemetry and no cloud.
-* **Your subscription.** Botss starts the official `claude` CLI with your own login. It never reads, stores, or forwards your credentials, and never calls Anthropic APIs directly.
-* **You stay in control.** Approval gates on the PRD, design direction, architecture, plan, and release (all on by default), a kill switch, a daily budget with a reserve for your own use, and a pause when Claude Code reports a usage limit.
-* **Real engineering.** Contracts before code, a collision-free task plan, test-first agents, `verify` commands that must pass before a task counts as done, code review, QA, and serialized merges with integration checks.
+Botss turns Claude Code into a small software company that works for you:
+
+1. **You write an idea**, in plain words ("a booking app for my barbershop").
+2. **The PM asks you a short batch of questions**, each with a recommended answer, then writes a PRD (product requirements document) for you to approve.
+3. **The designer proposes 2 to 3 visual directions.** You pick one, and they produce design tokens and screen mockups.
+4. **The tech lead writes the architecture and API contracts**, then a task plan that is checked by code: no dependency cycles, and no two parallel tasks editing the same files.
+5. **You choose the team size**, and the build starts. Engineers work in parallel, each in its own git worktree. Every task goes through **tests → code review → QA → merge**, and the merged result is checked after every merge.
+6. **You approve the release** and merge the finished app into your own branch.
+
+Each team member is a headless **Claude Code** process started by Botss. The roles follow plain-markdown playbooks ("skills") that you can read and edit. Everything they do (files edited, commands run, messages, decisions, reviews) streams to a dashboard at `http://127.0.0.1`.
+
+**What you get at the end:** a working, tested app in your repo. The default stack is Next.js, FastAPI and PostgreSQL, with Docker Compose for local development and GitHub Actions CI. Botss never deploys anything.
+
+### Why Botss
+
+| | |
+|---|---|
+| 🏠 **Local first** | Runs on your machine, binds to `127.0.0.1`, needs a random access token, and has no telemetry or cloud service. |
+| 🔑 **Your subscription** | Uses the official `claude` CLI with your own login. Botss never reads or stores your credentials and never calls Anthropic APIs directly. |
+| 🧭 **You stay in charge** | Approval gates for the PRD, design, architecture, plan, and release. A kill switch. Agents ask you when something costs money, needs a key, or changes scope. |
+| 🧱 **Real engineering, not vibes** | Contracts before code, test-first tasks, a `verify` command that must pass before a task counts as done, independent code review, QA with bug reports, and serialized merges with integration checks. |
+| 💸 **Quota aware** | A daily token budget with a reserve for your own use, concurrency limits, and an automatic pause and resume when Claude Code hits a usage limit. |
+| ✏️ **Editable team** | Every role's behavior is markdown in [`skills/`](skills/). Change how your PM writes PRDs or how your reviewer judges code, right in the dashboard. |
+
+---
+
+## Requirements
+
+| Tool | Why | Check |
+|---|---|---|
+| **Node.js 22.18+** | Runs Botss | `node --version` |
+| **Git 2.20+** | Branches and worktrees for each agent | `git --version` |
+| **Claude Code**, logged in | The agents ([install](https://docs.claude.com/en/docs/claude-code)), then run `claude` once to log in | `claude --version` |
+| **pnpm** | Installs Botss (ships with Node through corepack) | `corepack pnpm --version` |
+| **Docker** with Compose | Each agent gets its own database for the apps Botss builds | `docker compose version` |
+| **uv** | Python tooling for the default FastAPI backend ([install](https://docs.astral.sh/uv/)) | `uv --version` |
+
+Botss runs on macOS, Linux, and Windows (it is developed on Windows with Git Bash). On Windows, [Git for Windows](https://git-scm.com/download/win) is required, because Botss and Claude Code use its `bash`.
+
+---
 
 ## Quickstart
 
-The easiest path is to let Claude Code set it up for you:
+### Option A: let Claude Code set it up (recommended)
 
 ```bash
 git clone https://github.com/The-Botss-2/Botss.git botss
 cd botss
 claude
-# then say: "set up Botss"
 ```
 
-Claude reads [`CLAUDE.md`](CLAUDE.md), checks your prerequisites, and walks you through each step, asking before it installs anything system-wide.
+Then say **"set up Botss"**. Claude follows [`CLAUDE.md`](CLAUDE.md): it checks your prerequisites, installs Botss, creates your project folder, and starts the dashboard. It explains each step and asks before installing anything system-wide.
 
-### Manual setup
-
-Prerequisites: Node.js 22.18+, git 2.20+, [Claude Code](https://docs.claude.com/en/docs/claude-code) (logged in), and for the apps Botss builds: Docker with Compose, `uv`, and pnpm (`corepack enable`).
+### Option B: set it up yourself
 
 ```bash
-git clone https://github.com/The-Botss-2/Botss.git botss && cd botss
-corepack enable            # provides pnpm (ships with Node)
-pnpm install
-pnpm build                 # builds the dashboard
-npm link ./packages/cli    # or: alias botss="node --disable-warning=ExperimentalWarning $PWD/packages/cli/src/main.ts"
-botss doctor               # check prerequisites
-botss init ~/code/my-app   # make a folder a Botss project
-cd ~/code/my-app && botss up
+# 1. Get Botss and install it
+git clone https://github.com/The-Botss-2/Botss.git botss
+cd botss
+corepack pnpm install
+corepack pnpm build          # builds the dashboard
+
+# 2. Make the `botss` command available (pick one)
+#    macOS / Linux (add to ~/.zshrc or ~/.bashrc):
+alias botss="node $(pwd)/packages/cli/bin/botss.js"
+#    Windows PowerShell (add to your $PROFILE):
+#    function botss { node "C:\path\to\botss\packages\cli\bin\botss.js" @args }
+
+# 3. Check your machine
+botss doctor
+
+# 4. Create a project folder for the app you want built
+botss init ~/code/my-app
+
+# 5. Start Botss
+cd ~/code/my-app
+botss up
 ```
 
-`botss up` prints and opens `http://127.0.0.1:4800/?token=…`. Type your idea, answer the questions, approve the PRD, pick a design direction, approve the architecture and plan, and watch the team build. When the release is approved, merge the `botss/integration` branch into your main branch yourself; Botss never does that for you.
+`botss up` prints a link like `http://127.0.0.1:4800/?token=…` and opens it in your browser. Keep that terminal open: **Ctrl+C stops Botss and every agent.**
+
+> 💡 `botss init` works on a new or an existing folder. Botss never changes your current branch. It works on a separate `botss/integration` branch and keeps agent worktrees next to your folder in `../.botss-worktrees/`.
+
+---
+
+## Your first build
+
+Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.md`](examples/todo-with-auth.md) is one you can paste in.
+
+1. **Set limits first.** In **Settings**, set a daily token budget you are comfortable with and keep *max concurrent agents* at 2 or 3. Leave every approval gate on.
+2. **Idea.** Describe the app, add screenshots or links if you have them, choose a stakes level, and submit.
+3. **Questions.** The PM sends one batch of questions, each with a recommended option and why it matters. Answer them, or click **Accept all recommendations**.
+4. **PRD.** Read it in **Documents**. Click **Approve**, or **Request changes** with comments, and the PM revises it.
+5. **Design.** Pick one of the visual directions. The designer then produces tokens and screen mockups, which you can preview at desktop and mobile sizes.
+6. **Architecture.** Review the tech lead's architecture and API contract, then approve it.
+7. **Plan and team.** In **Team builder**, see every task, the dependency graph, the critical path, and an estimate of tokens and time. Pick how many agents per role (more agents than the plan has parallel lanes just wait), then click **Approve plan & start build**.
+8. **Watch the build.** On the **Live board**, tasks move from *To do* to *Done*. The **Team feed** shows agents messaging each other, reviews, merges, and blocked actions. **Agents** shows what each agent is doing right now. If an agent needs a decision from you, it appears in **Questions**.
+9. **Release.** QA runs the full suite on the merged branch and Botss writes a release summary. Approve it, then merge the `botss/integration` branch into your main branch when you are ready:
+
+   ```bash
+   git merge botss/integration
+   ```
+
+---
 
 ## How it works
 
 ```
-Idea → PM questions (one batch) → PRD [you approve]
-     → Designer directions [you pick] → tokens + screen specs
-     → Tech lead architecture + contracts [you approve]
-     → Task plan, validated: no cycles, no file collisions [you approve, choose team size]
-     → T000 scaffold → T001 infra → parallel slices
-        each task: engineer (test first, verify) → reviewer → QA → merge + integration checks
-     → QA journey tests on the merged branch → optional security audit → release [you approve]
+ Idea ─▶ PM questions ─▶ PRD ──[you approve]──▶ Designer directions ──[you pick]──▶ tokens + screens
+      ─▶ Tech lead: architecture + contracts ──[you approve]──▶ task plan ──[you approve + pick team]──▶
+         T000 scaffold ─▶ T001 infra ─▶ parallel tasks:
+                                        engineer (test first, verify) ─▶ reviewer ─▶ QA ─▶ merge + checks
+      ─▶ QA journey tests on the merged branch ─▶ optional security audit ──[you approve]──▶ done
 ```
 
-* **Skills are the playbook.** Each role's behavior is plain markdown in [`skills/`](skills/). `botss init` copies them into your project's `.botss/skills/`, and you can edit them in the dashboard's skills editor.
-* **The `botss` CLI is the only shared state.** Agents call `botss task done`, `botss ask @human`, `botss msg @frontend` and so on ([reference](skills/team-protocol/references/botss-cli.md)). The server enforces role permissions, and a guard hook stops writes outside a task's files, force pushes, credential reads, and other unsafe actions.
-* **Plain code decides.** Scheduling, permissions, plan validation, and merging are deterministic code, not an LLM.
+* **Every agent is a real Claude Code session.** Botss starts `claude -p` in the agent's own git worktree, with that role's skills added to its system prompt, a scoped access token, and its own ports and Docker Compose project, so parallel agents never collide.
+* **Agents share state only through the `botss` CLI:** `botss task done`, `botss ask @human`, `botss msg @frontend`, `botss review approve`, and so on ([reference](skills/team-protocol/references/botss-cli.md)). The server checks role permissions on every command.
+* **Plain code makes the decisions.** Scheduling, permissions, plan validation, and merging are deterministic code, not an LLM. A task is "done" only when its `verify` command passes. Merges happen one at a time, and if a merge conflicts or the checks fail, the tech lead gets an integration task.
+* **Everything is visible.** Each agent's actions, messages, decisions, reviews, and raw output are stored and streamed to the dashboard, and survive a page reload.
 
-More detail: [docs/architecture.md](docs/architecture.md) and [docs/claude-code-integration.md](docs/claude-code-integration.md).
+More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code](docs/claude-code-integration.md) · [Security review](docs/security-review.md) · [Design decisions](docs/decisions/)
 
-### How the orchestrator uses the skills
+### The team
 
-1. `botss init` copies `skills/` into the target project's `.botss/skills/` on the `botss/integration` branch. That folder is not auto-discovered by Claude Code, so a backend agent is never offered the designer's skills.
-2. For each agent run, the orchestrator appends the role's SKILL.md files (in `roles.yaml` order, team-protocol first) to the system prompt with `--append-system-prompt-file`, adds the task file to the prompt, and starts `claude -p` in that agent's worktree. It never touches your credentials; your own `claude` login is used.
-3. Reference files are not preloaded. The SKILL.md bodies tell the agent which reference to open and when, which keeps every run's context small and saves quota.
+| Role | What it does |
+|---|---|
+| **Product manager** | Turns your idea into clarifying questions and a PRD; answers product questions during the build |
+| **Tech lead** | Architecture, API and data contracts, the task plan, the app scaffold, integration fixes |
+| **Designer** | Visual directions, design tokens, screen specs and HTML mockups; design review of built screens |
+| **Backend engineer** | FastAPI endpoints, models, migrations, and tests |
+| **Frontend engineer** | Next.js screens, components, and tests |
+| **QA engineer** | Verifies each task in the running app, files bugs, writes end-to-end journey tests |
+| **Code reviewer** | Read-only review of every task's diff, with severity-rated comments |
+| **DevOps engineer** | Docker Compose, Dockerfiles, environment files, CI |
+| **Security engineer** *(optional)* | Threat model and a pre-release audit |
+
+---
+
+## Dashboard tour
+
+| Screen | What you do there |
+|---|---|
+| **Idea** | Describe the app, add attachments and links |
+| **Questions** | Answer batched questions (with recommendations) and anything an agent asks `@human`; see alerts |
+| **Documents** | Read the PRD, architecture, contracts (OpenAPI rendered), decisions, and plan; compare versions, comment, approve |
+| **Design** | Pick a direction, browse tokens, preview mockups at desktop and mobile sizes |
+| **Team builder** | Task graph, critical path, estimate; choose agents per role and models; start the build |
+| **Live board** | Kanban of every task; open one for its file, timeline, handoff, review, QA report, diff, and verify output |
+| **Agents** | One card per agent: current action, file, elapsed time, tokens; recent events and raw stream; pause per agent |
+| **Team feed** | Everything the team does, as it happens; filter by role or task |
+| **Preview** | Run the merged app (Docker) and use it in the dashboard |
+| **Usage** | Tokens today and over 7 days, by role and task; budget and usage-limit events |
+| **Settings** | Budgets, concurrency, gates, models per role, permission mode, check commands, and the **skills editor** |
+
+The header always shows the phase, your quota, open questions, **Pause/Resume**, and the red **Kill switch**.
+
+<details>
+<summary>More screenshots</summary>
+
+**Team feed** (dark theme)
+![Team feed](docs/screenshots/feed-dark.png)
+
+**Questions with recommendations**
+![Questions](docs/screenshots/questions.png)
+
+**Team builder with the task graph**
+![Team builder](docs/screenshots/team-builder.png)
+
+**Task diff**
+![Task diff](docs/screenshots/task-drawer-diff.png)
+
+**Documents**
+![PRD](docs/screenshots/docs-prd.png)
+
+**Usage**
+![Usage](docs/screenshots/usage.png)
+
+</details>
+
+---
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `botss init [path]` | Make a folder a Botss project (git, `.botss/`, skills, `botss/integration` branch) |
-| `botss doctor [--login]` | Check prerequisites; `--login` also confirms `claude` is logged in (asks first; uses a tiny bit of quota) |
-| `botss up [--port N]` | Start the server and dashboard on 127.0.0.1 |
-| `botss status` | Phase, tasks, quota, and working agents |
-| `botss pause` / `botss resume` | Stop / restart scheduling new agent runs |
-| `botss stop` | Kill switch: stop every agent process now |
-| `botss logs <agent\|task> [-f]` | Recent events for `backend-1` or `T012` |
+| `botss init [folder]` | Make a folder a Botss project (git repo, `.botss/`, skills, `botss/integration` branch) |
+| `botss doctor` | Check prerequisites and print fixes. `--login` also confirms Claude Code is logged in (asks first; sends one tiny prompt) |
+| `botss up [--port N] [--no-open]` | Start the server and dashboard on `127.0.0.1` (default port 4800) |
+| `botss status` | Phase, task counts, quota, and working agents for the current project |
+| `botss pause` / `botss resume` | Stop / restart starting new agent runs |
+| `botss stop` | **Kill switch:** stop every agent process immediately |
+| `botss logs <agent\|task> [-f]` | Recent events for an agent (`backend-1`) or a task (`T012`) |
 
-## Usage and terms
+Agents use the same binary for their own commands (`whoami`, `task`, `msg`, `ask`, `review`, `qa`, ...). You normally never need those.
 
-Botss runs the official Claude Code CLI on your own machine, using your own Claude account and subscription (or API billing, if you set that up in Claude Code itself). Every agent run counts toward your Claude usage. Botss gives you a daily budget, a reserve percentage for your own use (by default Botss uses at most 80% of the budget you set), concurrency caps, and a kill switch, but **you are responsible for your usage and for following Anthropic's current terms of service and usage policies** for Claude and Claude Code.
+---
 
-Botss is an independent open-source project. It is **not affiliated with, endorsed by, or sponsored by Anthropic**. "Claude" and "Claude Code" are trademarks of Anthropic, used here only to describe compatibility.
+## Safety and cost
 
-Botss never deploys anything or contacts paid external services on its own. Anything that costs money or touches real external services needs your explicit approval in the dashboard.
+**What agents can and cannot do.** A guard hook runs before every file edit and shell command an agent makes, and blocks it with a clear reason when the agent tries to:
+
+* write outside its own worktree, or outside the files its task owns (the code reviewer can't edit code at all);
+* force-push, push other branches, merge, rebase shared branches, or delete branches or worktrees;
+* delete files outside its worktree, or wipe another agent's Docker volumes;
+* call the internet with `curl`/`wget` (localhost only, unless a task allows it);
+* read Claude credentials or touch Botss's own database.
+
+As a backstop, a task cannot be marked done if its branch changes files outside its paths, and only Botss merges. Destructive or paid actions need your approval. Botss is a policy sandbox, not an operating-system sandbox: agents run as your user. For untrusted ideas, run Botss in a VM or container. See the [security review](docs/security-review.md).
+
+**What it costs.** Every agent run uses your Claude Code subscription (or API billing, if you set that up in Claude Code). You control it with:
+
+* **Daily budget and reserve:** Botss stops starting new runs once it has used `(100 − reserve)%` of your daily token budget. The default reserve is 20%, so you always keep some for yourself.
+* **Concurrency:** a global cap (default 3) and per-role counts from the team builder.
+* **Usage limits:** when Claude Code reports a limit, Botss pauses, shows the reset time, and resumes on its own afterwards (this can be turned off).
+* **Runaway guards:** turn limits per role, a time limit per run, and tasks that fail 3 times in a row are blocked for you to look at.
+* **Estimate before you build:** the team builder shows expected tokens per role before you start.
+
+---
+
+## Configuration
+
+Most settings live in the dashboard (**Settings**) and are stored per project:
+
+| Setting | Default | |
+|---|---|---|
+| Max concurrent agents | 3 | Total agents running at once |
+| Daily token budget / reserve | 10M / 20% | Botss uses at most 80% of the budget |
+| Approval gates | all on | PRD, design direction, architecture, plan, release; each can auto-approve |
+| Models per role | Claude Code default | For example a stronger model for the tech lead and a faster one for the reviewer |
+| Max turns per role, run timeout | 80 turns / 45 min | Runaway guards |
+| Permission mode | `dontAsk` + allowlist | `bypassPermissions` is available with a warning; the guard hook always runs |
+| Check commands | from the scaffold | Run on the integration branch after every merge |
+| QA per task, security audit | on / off | |
+
+Role definitions, write paths, and the default stack are in [`roles.yaml`](roles.yaml). Role behavior is in [`skills/`](skills/), copied into each project at `botss init`; edit a project's copy in **Settings → Skills** (with reset to default).
+
+### Where Botss keeps things in your project
+
+```
+my-app/                        your repo (your branch is never modified)
+  .botss/botss.db              board state (local only, never committed)
+  .botss/config.yaml           initial settings
+  .botss/runs/<run>/           each agent run's prompt and raw output
+../.botss-worktrees/my-app/
+  _integration/                the botss/integration branch: skills, docs (PRD, architecture, contracts, design), tasks, and the app
+  backend-1-T012/              one worktree per task, removed after merge
+```
+
+---
 
 ## FAQ
 
-**Does Botss send my code anywhere?** Only Claude Code itself talks to Claude, exactly as when you use `claude` by hand. The Botss server listens on 127.0.0.1 and has no telemetry.
+**Is this an official Anthropic product?**
+No. Botss is an independent open-source project that runs the official Claude Code CLI. See [Usage and terms](#usage-and-terms).
 
-**How much quota does a build use?** It depends on the app. The plan screen shows an estimate before the build starts (tasks per role × typical run cost), and the Usage screen shows actual usage by day, role, and task. Start with a small idea and a small team.
+**Does Botss send my code anywhere?**
+Only Claude Code talks to Claude, exactly as when you use `claude` yourself. The Botss server listens on `127.0.0.1`, requires a token, and has no telemetry.
 
-**What happens when I hit a usage limit?** Botss pauses, shows the reset time, and resumes on its own after the reset (you can turn that off). Interrupted agents continue their own sessions.
+**Can I use a different stack?**
+Yes. Tell the PM in your idea or answers (for example "use Django and Vue"). The tech lead records the stack in the architecture, and the skills adapt. The built-in skills have the most detail for the default stack.
 
-**Can I change how the agents work?** Yes. Edit the skills in the dashboard (Settings → Skills) or in `skills/` before `botss init`. Gates, budgets, models per role, turn limits, and the permission mode are in Settings.
+**Can I add Botss to an existing app?**
+Yes. Run `botss init` in the repo. The tech lead plans around the existing code. Start with a small, well-defined feature.
 
-**Windows?** Botss is developed and tested on Windows with Git Bash and targets macOS and Linux. On Windows, WSL2 is the recommended setup for the apps Botss builds (Docker, uv).
+**An agent is stuck or looping. What do I do?**
+Open its card on **Agents** to see the raw output, or the task on the **Live board** for its verify output. You can pause that agent, unblock or hold the task, answer its question, or hit the kill switch. Tasks that fail three times stop on their own and alert you.
 
-**What does Botss build by default?** Next.js + TypeScript + Tailwind on the front, FastAPI + SQLAlchemy + Alembic + PostgreSQL on the back, Docker Compose for local dev, and GitHub Actions CI ([`roles.yaml`](roles.yaml)). Tell the PM if you want a different stack.
+**What happens if I close the terminal or my machine restarts?**
+Agents stop. Run `botss up` again: nothing is lost, interrupted tasks resume on their own sessions, and the board picks up where it left off.
 
-## Contributing
+**Can I change how the agents behave?**
+Yes. That is the point of skills. Edit them per project in **Settings → Skills**, or in [`skills/`](skills/) before `botss init` to change the defaults.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Skill credits: [CREDITS.md](CREDITS.md).
+**Can I use Codex or another agent CLI?**
+Not yet. The runner is behind an interface so other CLIs can be added later.
 
-## License
+---
 
-[MIT](LICENSE)
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `botss doctor` says Claude Code is missing | Install Claude Code, run `claude` once to log in, then `botss doctor --login` |
+| The dashboard says "open the link printed by botss up" | The page needs the token. Use the full link from the terminal, or run `botss up` again to print it |
+| Port 4800 is in use | `botss up --port 4801` |
+| Backend tasks fail with "uv: command not found" | Install [uv](https://docs.astral.sh/uv/) and restart `botss up` |
+| Agents can't start databases | Start Docker Desktop (or the Docker daemon) and check `docker compose version` |
+| Botss paused itself | Check the header: a usage limit (resumes on its own), the daily budget (raise it in Settings), or the kill switch (`botss resume`) |
+| `pnpm: command not found` | Use `corepack pnpm …`, or run `corepack enable` once |
+
+---
+
+## Development
+
+```bash
+corepack pnpm install
+corepack pnpm vitest run                       # unit + end-to-end tests (uses a fake claude: no quota)
+corepack pnpm --filter @botss/dashboard e2e    # dashboard browser tests (Playwright)
+corepack pnpm --filter @botss/dashboard dev    # dashboard dev server (proxies to a running `botss up`)
+```
+
+| Package | |
+|---|---|
+| `packages/core` | Pure logic: plan validation, collision checks, scheduler, permissions, guard, stream parsing, database schema |
+| `packages/server` | API, WebSocket events, orchestrator, agent runner, git worktrees |
+| `packages/cli` | The `botss` command (owner and agent commands, guard hook) |
+| `packages/dashboard` | React + Vite + Tailwind dashboard |
+| `packages/fake-claude` | A stand-in for `claude` used by every test |
+
+Node runs the TypeScript directly; only the dashboard is built. Tests never call the real Claude. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Usage and terms
+
+Botss runs the official Claude Code CLI on your own machine, using your own Claude account and subscription (or API billing, if you configure that in Claude Code). Every agent run counts toward your Claude usage. Botss gives you budgets, a reserve, concurrency caps, and a kill switch, but **you are responsible for your usage and for complying with Anthropic's current terms of service and usage policies** for Claude and Claude Code.
+
+Botss is an independent open-source project and is **not affiliated with, endorsed by, or sponsored by Anthropic**. "Claude" and "Claude Code" are trademarks of Anthropic and are used here only to describe compatibility.
+
+Botss does not deploy software or use paid third-party services on its own. Anything that costs money or touches real external services requires your explicit approval.
+
+## Credits and license
+
+The role skills were shaped by ideas from several open-source projects; see [CREDITS.md](CREDITS.md).
+
+Released under the [MIT License](LICENSE).

@@ -5,7 +5,7 @@ Thanks for helping. Botss is small on purpose: plain code for decisions, markdow
 ## Setup
 
 ```bash
-corepack enable && pnpm install && pnpm build
+corepack pnpm install && corepack pnpm build
 pnpm check        # typecheck + lint + unit and e2e tests (Vitest, fake claude)
 pnpm test:e2e     # dashboard Playwright tests
 ```
