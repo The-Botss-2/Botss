@@ -4,6 +4,17 @@
 
 Describe an app idea. Botss asks you a few sharp questions, writes a PRD, and then a team of agents (product manager, tech lead, designer, backend, frontend, QA, code reviewer, DevOps, and optionally security) designs, plans, and builds it in parallel. Each agent is a headless Claude Code process working in its own git worktree. A live dashboard on `127.0.0.1` shows everything as it happens and lets you approve, answer, steer, pause, and stop.
 
+![The Botss live board](docs/screenshots/board-light.png)
+
+<details><summary>More screens: team feed, questions, documents, team builder</summary>
+
+![Team feed](docs/screenshots/feed-dark.png)
+![Questions](docs/screenshots/questions.png)
+![Documents](docs/screenshots/docs-prd.png)
+![Team builder](docs/screenshots/team-builder.png)
+
+</details>
+
 * **Local first.** The server binds to `127.0.0.1`, every request needs a random token, and there is no telemetry and no cloud.
 * **Your subscription.** Botss starts the official `claude` CLI with your own login. It never reads, stores, or forwards your credentials, and never calls Anthropic APIs directly.
 * **You stay in control.** Approval gates on the PRD, design direction, architecture, plan, and release (all on by default), a kill switch, a daily budget with a reserve for your own use, and a pause when Claude Code reports a usage limit.

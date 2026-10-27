@@ -16,13 +16,13 @@ export interface BotssEvent {
 export function topicsFor(type: string): string[] {
   const head = type.split(".")[0]!;
   const map: Record<string, string[]> = {
-    task: ["tasks"],
+    task: ["tasks", "project"],
     plan: ["tasks", "docs", "project"],
-    run: ["runs", "agents"],
+    run: ["runs", "agents", "project"],
     agent: ["agents"],
     msg: ["messages"],
-    ask: ["messages", "questions", "tasks"],
-    answer: ["messages", "questions", "tasks"],
+    ask: ["messages", "questions", "tasks", "project"],
+    answer: ["messages", "questions", "tasks", "project"],
     decision: ["decisions"],
     doc: ["docs", "project"],
     review: ["tasks", "reviews"],

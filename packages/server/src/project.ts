@@ -88,6 +88,7 @@ export class Project {
 
   async close(): Promise<void> {
     await this.orch.stop();
+    this.orch.closed = true;
     this.db.close();
   }
 }

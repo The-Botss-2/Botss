@@ -506,7 +506,11 @@ export class Orchestrator {
     return runId;
   }
 
+  /** Set once the project database is closed: late stream lines and exits are dropped. */
+  closed = false;
+
   private onStream(run: ActiveRun, ev: StreamEvent): void {
+    if (this.closed) return;
     const meta = { actor: run.agent, role: run.role, task: run.task, run: run.runId };
     switch (ev.kind) {
       case "init":
@@ -556,6 +560,7 @@ export class Orchestrator {
   private finalizing = new Set<string>();
 
   private async onExit(run: ActiveRun, exit: RunExit): Promise<void> {
+    if (this.closed) return;
     if (run.task) this.finalizing.add(run.task);
     try {
       await this.finalizeRun(run, exit);

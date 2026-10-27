@@ -1,0 +1,487 @@
+@import "tailwindcss";
+
+/* Botss dashboard: "engineering notebook / mission control".
+   Warm paper in light mode, deep ink in dark mode. Thin rules instead of shadows. One signal colour per role. */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --paper: #f4f1e9;
+  --surface: #fbfaf6;
+  --sunken: #ece8dd;
+  --rule: #d9d2c3;
+  --rule-strong: #b9b09d;
+  --ink: #1c1b18;
+  --ink-2: #4f4b42;
+  --ink-3: #6f6a5e;
+  --accent: #1d4f91;
+  --accent-ink: #ffffff;
+  --focus: #1d4f91;
+  --danger: #b42318;
+  --danger-ink: #ffffff;
+  --danger-soft: #fbe6e3;
+  --ok: #1f7a4a;
+  --ok-soft: #e1f2e7;
+  --warn: #9a6200;
+  --warn-soft: #f8edd3;
+  --highlight: #fff3c4;
+
+  /* Role signal colours (text-safe on paper and surface, AA). */
+  --role-pm: #a8325a;
+  --role-tech-lead: #234f8f;
+  --role-designer: #9a4a1f;
+  --role-backend: #1f6e4c;
+  --role-frontend: #0b6875;
+  --role-qa: #7d5a00;
+  --role-reviewer: #5a4b9c;
+  --role-devops: #4c5d1f;
+  --role-security: #b02a20;
+  --role-human: #1c1b18;
+  --role-system: #6f6a5e;
+
+  /* Board status colours. */
+  --st-todo: #8a8474;
+  --st-ready: #2c6bb3;
+  --st-in_progress: #b7791f;
+  --st-blocked: #c0392b;
+  --st-review: #6a52b3;
+  --st-changes_requested: #c4621a;
+  --st-qa: #0f7f8c;
+  --st-done: #2b8a57;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --paper: #101217;
+  --surface: #161a21;
+  --sunken: #0c0e12;
+  --rule: #272c36;
+  --rule-strong: #3a414e;
+  --ink: #e9e5db;
+  --ink-2: #bdb7aa;
+  --ink-3: #8f897d;
+  --accent: #8ab4f8;
+  --accent-ink: #0c1a2e;
+  --focus: #8ab4f8;
+  --danger: #f2766b;
+  --danger-ink: #1a0604;
+  --danger-soft: #3a1714;
+  --ok: #6fd19b;
+  --ok-soft: #12291c;
+  --warn: #e7b85c;
+  --warn-soft: #2e2410;
+  --highlight: #3a3315;
+
+  --role-pm: #f28fb3;
+  --role-tech-lead: #8db6f2;
+  --role-designer: #ecaa80;
+  --role-backend: #7dd3a7;
+  --role-frontend: #6ad1de;
+  --role-qa: #e8c66a;
+  --role-reviewer: #b8acf0;
+  --role-devops: #c0d184;
+  --role-security: #f58a80;
+  --role-human: #e9e5db;
+  --role-system: #8f897d;
+
+  --st-todo: #7d786d;
+  --st-ready: #6aa5ec;
+  --st-in_progress: #e2ad4d;
+  --st-blocked: #f07468;
+  --st-review: #a996f0;
+  --st-changes_requested: #f0995a;
+  --st-qa: #4cc5d3;
+  --st-done: #62c98f;
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
+  --color-danger-ink: var(--danger-ink);
+  --color-danger-soft: var(--danger-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-highlight: var(--highlight);
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss02", "zero";
+}
+
+::selection {
+  background: var(--highlight);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Paper grain: a faint ruled-notebook background on the main canvas. */
+.canvas {
+  background-color: var(--paper);
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--rule) 35%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 24px 100%;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero";
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background-color 120ms,
+      border-color 120ms;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--sunken);
+    border-color: var(--ink-3);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 85%, var(--paper));
+    border-color: var(--ink);
+  }
+  .btn-danger {
+    background: var(--danger);
+    color: var(--danger-ink);
+    border-color: var(--danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 85%, var(--ink));
+    border-color: var(--danger);
+  }
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+  }
+  .btn-sm {
+    height: 1.625rem;
+    padding: 0 0.5rem;
+    font-size: 12px;
+  }
+
+  /* Form fields */
+  .field {
+    width: 100%;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 3px;
+    padding: 0.4rem 0.55rem;
+    font-size: 13px;
+  }
+  .field:focus-visible {
+    outline-offset: 0;
+  }
+  .field::placeholder {
+    color: var(--ink-3);
+  }
+  select.field {
+    padding-right: 1.5rem;
+  }
+  .label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-2);
+    margin-bottom: 0.25rem;
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+
+  /* Section heading used across screens: a rule with a mono label. */
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--ink-3);
+  }
+  .section-title::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--sunken) 0%,
+    color-mix(in srgb, var(--sunken) 50%, var(--surface)) 50%,
+    var(--sunken) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 2px;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.pulse-dot {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.flash-in {
+  animation: flash 1.2s ease-out;
+}
+@keyframes flash {
+  from {
+    background-color: var(--highlight);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Native dialog */
+dialog.modal {
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0;
+  border-radius: 4px;
+  max-width: min(32rem, calc(100vw - 2rem));
+  width: 100%;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.25);
+}
+dialog.modal::backdrop {
+  background: rgb(16 18 23 / 0.45);
+}
+
+@layer components {
+  /* Markdown prose */
+  .prose {
+    color: var(--ink);
+    font-size: 14.5px;
+    line-height: 1.65;
+    max-width: 76ch;
+  }
+  .prose h1,
+  .prose h2,
+  .prose h3,
+  .prose h4 {
+    font-weight: 600;
+    line-height: 1.25;
+    margin: 1.6em 0 0.6em;
+    scroll-margin-top: 1rem;
+  }
+  .prose h1 {
+    font-size: 1.6rem;
+    margin-top: 0.2em;
+    letter-spacing: -0.01em;
+  }
+  .prose h2 {
+    font-size: 1.2rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .prose h3 {
+    font-size: 1.02rem;
+  }
+  .prose p,
+  .prose ul,
+  .prose ol,
+  .prose table,
+  .prose pre,
+  .prose blockquote {
+    margin: 0.75em 0;
+  }
+  .prose ul {
+    list-style: disc;
+    padding-left: 1.4em;
+  }
+  .prose ol {
+    list-style: decimal;
+    padding-left: 1.4em;
+  }
+  .prose li {
+    margin: 0.2em 0;
+  }
+  .prose a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .prose code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--sunken);
+    padding: 0.1em 0.3em;
+    border-radius: 2px;
+  }
+  .prose pre {
+    background: var(--sunken);
+    border: 1px solid var(--rule);
+    padding: 0.8rem 1rem;
+    overflow-x: auto;
+    border-radius: 3px;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .prose pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+  }
+  .prose blockquote {
+    border-left: 3px solid var(--rule-strong);
+    padding-left: 1rem;
+    color: var(--ink-2);
+  }
+  .prose table {
+    border-collapse: collapse;
+    font-size: 13px;
+    display: block;
+    overflow-x: auto;
+  }
+  .prose th,
+  .prose td {
+    border: 1px solid var(--rule);
+    padding: 0.35rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  .prose th {
+    background: var(--sunken);
+    font-weight: 600;
+  }
+  .prose hr {
+    border: 0;
+    border-top: 1px solid var(--rule);
+    margin: 2em 0;
+  }
+  .prose input[type="checkbox"] {
+    margin-right: 0.4em;
+  }
+  .mermaid-block svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* diff2html: blend with the paper theme */
+  .diff-view .d2h-wrapper {
+    font-size: 12px;
+  }
+  .diff-view .d2h-file-header {
+    background: var(--sunken);
+    border-color: var(--rule);
+  }
+  .diff-view .d2h-file-wrapper {
+    border-color: var(--rule);
+    border-radius: 3px;
+  }
+  .diff-view .d2h-code-line,
+  .diff-view .d2h-code-side-line {
+    font-family: var(--font-mono);
+  }
+  .diff-view .d2h-file-list-wrapper a {
+    color: var(--accent);
+  }
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
