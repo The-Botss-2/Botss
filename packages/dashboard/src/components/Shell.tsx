@@ -7,6 +7,7 @@ import { href } from "../lib/router";
 import { useTheme, type ThemePref } from "../lib/theme";
 import { PHASE_LABELS, PHASES, type Phase, type ProjectInfo } from "../lib/types";
 import { CountBadge, Icon, Modal, toast, toastError } from "./ui";
+import { RequestChangeButton } from "./Changes";
 
 export const SCREENS: { id: string; label: string; icon: string }[] = [
   { id: "idea", label: "Idea", icon: "idea" },
@@ -160,6 +161,7 @@ function Header({ pid, p }: { pid: string; p: ProjectInfo | undefined }) {
         )}
         <div className="ml-auto flex items-center gap-3">
           {p && <QuotaMeter p={p} />}
+          <RequestChangeButton pid={pid} p={p} />
           <a
             href={href(pid, "questions")}
             className="btn btn-sm"

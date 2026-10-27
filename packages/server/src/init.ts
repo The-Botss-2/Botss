@@ -66,6 +66,7 @@ const SECRET_AND_HEAVY = [
   "*.keystore",
   "id_rsa*",
   "id_ed25519*",
+  ".claude/settings.local.json",
   "node_modules/",
   ".venv/",
   "venv/",
@@ -113,7 +114,7 @@ export async function initProject(root0: string, opts: { skillsSource?: string; 
       await git(root, ["commit", "--allow-empty", "-m", "Initial commit"]);
       created.push("initial commit");
     }
-  } else if ((await git(root, ["status", "--porcelain"])).stdout.trim()) {
+  } else if ((await git(root, ["status", "--porcelain"])).stdout.split("\n").some((l) => l.trim() && !l.includes(".botss/"))) {
     warnings.push("You have uncommitted changes. Agents start from your last commit, so commit what they should see.");
   }
 

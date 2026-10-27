@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { DiffView } from "../components/Diff";
 import { Markdown } from "../components/Markdown";
+import { RunTranscript } from "../components/LiveTranscript";
 import {
   AgentName,
   Badge,
@@ -200,7 +201,7 @@ const Card = memo(function Card({ pid, t }: { pid: string; t: Task }) {
 
 // ---------------------------------------------------------------------------------------------- drawer
 
-type DTab = "file" | "timeline" | "handoff" | "review" | "qa" | "diff" | "verify";
+type DTab = "file" | "live" | "timeline" | "handoff" | "review" | "qa" | "diff" | "verify";
 
 export function TaskDrawer({ pid, id, onClose }: { pid: string; id: string; onClose: () => void }) {
   const q = useTask(pid, id);
@@ -315,6 +316,7 @@ export function TaskDrawer({ pid, id, onClose }: { pid: string; id: string; onCl
                   { id: "qa", label: "QA", count: d.qa.length + d.bugs.length },
                   { id: "diff", label: "Diff" },
                   { id: "verify", label: "Verify" },
+                  { id: "live", label: d.runs.some((r) => !r.ended_at) ? "● Live" : "Live" },
                 ]}
               />
             </div>
@@ -508,6 +510,24 @@ function DrawerTab({ pid, d, tab }: { pid: string; d: TaskDetail; tab: DTab }) {
       ) : (
         <p className="text-[13px] text-ink-3">No QA report yet.</p>
       );
+    case "live": {
+      const activeRun = d.runs.find((r) => !r.ended_at) ?? null;
+      const run = activeRun ?? d.runs.at(-1) ?? null;
+      return (
+        <div>
+          <div className="mono mb-2 text-[11px] text-ink-3">
+            {run ? `${run.id} · ${run.agent} · ${run.stage}${activeRun ? " · live" : " · last run"}` : ""}
+          </div>
+          <RunTranscript
+            key={run?.id ?? "none"}
+            pid={pid}
+            runId={run?.id ?? null}
+            active={Boolean(activeRun)}
+            role={run?.role ?? t.role}
+          />
+        </div>
+      );
+    }
     case "diff":
       return <TaskDiff pid={pid} id={t.id} />;
     case "verify":

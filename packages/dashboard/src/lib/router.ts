@@ -34,6 +34,7 @@ export function parseHash(hash: string): Route {
   const params = new URLSearchParams(query);
   if (parts[0] === "p" && parts[1])
     return { pid: parts[1], screen: parts[2] ?? "", rest: parts.slice(3), params };
+  if (parts[0] === "open") return { pid: null, screen: "open", rest: [], params };
   return { pid: null, screen: "projects", rest: [], params };
 }
 

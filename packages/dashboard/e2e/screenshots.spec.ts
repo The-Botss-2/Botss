@@ -191,6 +191,27 @@ test("screenshot tour", async ({ page }) => {
           { hang: true },
         ],
       },
+      "task:T006": {
+        steps: [
+          { botss: ["task", "start", "${BOTSS_TASK}"] },
+          {
+            text: "The Today queue needs the walk-in list and the booked slots merged and sorted by start time. I'll read the slots contract first, then build the list component.",
+          },
+          { bash: "cat .botss/docs/contracts/openapi.yaml | head -20", allowFail: true },
+          {
+            write: "src/${BOTSS_TASK}.txt",
+            content:
+              "export function TodayQueue({ slots, walkIns }) {\n  const queue = [...slots, ...walkIns].sort(byStart);\n  return <QueueList items={queue} />;\n}\n",
+          },
+          {
+            append: "src/${BOTSS_TASK}.txt",
+            content: "\nexport const byStart = (a, b) => a.startsAt.localeCompare(b.startsAt);\n",
+          },
+          { text: "Queue renders. Next: refresh when a walk-in is added (that was QA's bug B-0001)." },
+          { bash: 'node -e "process.exit(0)"', allowFail: true },
+          { hang: true },
+        ],
+      },
     },
     { name: "fade-and-co", settings: { max_concurrent_agents: 4 } },
   );
@@ -241,6 +262,21 @@ test("screenshot tour", async ({ page }) => {
     JSON.stringify(TOKENS, null, 2),
   );
   fs.writeFileSync(path.join(integ, ".botss/docs/design/screens/book-a-chair.html"), SCREEN_HTML);
+  fs.mkdirSync(path.join(integ, ".botss/docs/design/directions"), { recursive: true });
+  const dirHtml = (bg: string, fg: string, accent: string, font: string, name: string) =>
+    `<!doctype html><body style="margin:0;background:${bg};color:${fg};font-family:${font}"><div style="padding:48px 64px"><div style="font-size:14px;letter-spacing:.2em;color:${accent}">FADE &amp; CO.</div><h1 style="font-size:72px;margin:24px 0 12px">${name}</h1><p style="font-size:22px;max-width:640px;opacity:.8">Book a chair in under a minute. Deposits refundable up to 4 hours before.</p><button style="margin-top:28px;background:${accent};color:${bg};border:0;padding:16px 28px;font-size:20px;border-radius:4px">Book a chair</button></div></body>`;
+  fs.writeFileSync(
+    path.join(integ, ".botss/docs/design/directions/A.html"),
+    dirHtml("#1B1A17", "#F2EFE6", "#B8862B", "Impact, sans-serif", "Chalkboard"),
+  );
+  fs.writeFileSync(
+    path.join(integ, ".botss/docs/design/directions/B.html"),
+    dirHtml("#F7F3EA", "#1B1A17", "#7A2E2A", "Georgia, serif", "Barber pole heritage"),
+  );
+  fs.writeFileSync(
+    path.join(integ, ".botss/docs/design/directions/C.html"),
+    dirHtml("#FFFFFF", "#2F3437", "#5F7A5A", "system-ui, sans-serif", "Clean clinic"),
+  );
   fs.writeFileSync(
     path.join(integ, ".botss/docs/design/screens/book-a-chair.md"),
     "# Book a chair\n\n## Purpose\nPick a barber and a slot in under a minute.\n",
@@ -267,11 +303,20 @@ test("screenshot tour", async ({ page }) => {
     240_000,
   );
   await waitFor(() => h!.project.orch.activeRuns().some((r) => r.task === "T004"), "T004 running", 60_000);
+  await waitFor(() => h!.project.orch.activeRuns().some((r) => r.task === "T006"), "T006 running", 90_000);
+  await waitFor(
+    () =>
+      svc
+        .events({ run: h!.project.orch.activeRuns().find((r) => r.task === "T006")!.runId, limit: 100 })
+        .some((e) => /walk-in/.test(e.summary)),
+    "T006 streamed",
+    60_000,
+  );
 
   // Freeze the board in an interesting state: pause, then shape the rest.
   h.project.orch.pause("screenshot tour");
   await waitFor(
-    () => h!.project.orch.activeRuns().every((r) => r.task === "T004"),
+    () => h!.project.orch.activeRuns().every((r) => r.task === "T004" || r.task === "T006"),
     "other runs finished",
     120_000,
   );
@@ -279,7 +324,6 @@ test("screenshot tour", async ({ page }) => {
     svc.setStatus(id, status as never, { force: true, actor: "orchestrator", extra: extra as never });
   if (svc.task("T003")?.status !== "done")
     shape("T003", "review", { assignee: "backend-1", review_round: 1 });
-  if (svc.task("T006")?.status !== "done") shape("T006", "qa", { assignee: "frontend-1" });
   shape("T007", "blocked", {
     assignee: "backend-2",
     blocked_on: "@human",
@@ -287,7 +331,7 @@ test("screenshot tour", async ({ page }) => {
   });
   shape("T005", "changes_requested", { assignee: "frontend-1", review_round: 2 });
   svc.createBug(
-    "T006",
+    "T003",
     "major",
     "Queue does not refresh after a walk-in",
     "Steps: add a walk-in. Expected: queue shows it. Actual: needs reload.",
@@ -409,7 +453,11 @@ test("screenshot tour", async ({ page }) => {
 
   await goto(page, h, "agents");
   await expect(page.getByTestId("agent-devops-1")).toContainText("working");
+  await expect(page.getByTestId("agent-frontend-1").getByTestId("live-text").first()).toBeVisible();
+  await shot(page, "agents-live");
+  await page.getByRole("button", { name: "Focus frontend-1" }).click();
   await shot(page, "agents");
+  await page.getByRole("button", { name: "Back to all agents" }).click();
 
   await goto(page, h, "questions");
   await expect(page.getByTestId("alert")).toBeVisible();
@@ -418,7 +466,20 @@ test("screenshot tour", async ({ page }) => {
   await goto(page, h, "design");
   await expect(page.getByTestId("token-viewer")).toBeVisible();
   await page.locator("iframe[title^='Mockup']").waitFor();
+  await expect(page.locator("[data-testid^='direction-preview-']")).toHaveCount(3);
   await shot(page, "design");
+  svc.setPhase("design");
+  svc.submitDoc(
+    "design",
+    ".botss/docs/design/DESIGN.md",
+    "# Design\n\nBarber pole heritage: tokens and screens.\n",
+    "designer-1",
+    "designer",
+  );
+  await expect(page.getByTestId("gate-bar")).toContainText("Review the screens");
+  await page.getByText("SCREEN MOCKUPS").scrollIntoViewIfNeeded();
+  await shot(page, "design-review");
+  svc.setPhase("build");
 
   await goto(page, h, "idea");
   await expect(page.getByTestId("idea-readonly")).toBeVisible();
@@ -456,10 +517,49 @@ test("screenshot tour", async ({ page }) => {
   await expect(page.getByTestId("settings-form")).toBeVisible();
   await shot(page, "settings");
 
+  await goto(page, h, "board");
+  await page.getByTestId("request-change").click();
+  await page
+    .getByTestId("change-dialog")
+    .getByLabel("The change")
+    .fill("Customers should be able to book two services in one visit (cut + beard) with a single deposit.");
+  await shot(page, "change-request");
+  await page.getByTestId("change-dialog").getByRole("button", { name: "Cancel" }).click();
+  const now = new Date().toISOString();
+  svc.patchState({
+    changes: [
+      {
+        id: "CR-001",
+        text: "Customers can book two services in one visit with a single deposit.",
+        status: "prd_review",
+        created_at: now,
+        updated_at: now,
+        attachments: [],
+      },
+    ],
+  } as never);
+  svc.submitDoc(
+    "prd",
+    ".botss/docs/prd.md",
+    `${PRD_V2}\n## FR-12 Combined services\nA booking can hold two services; one deposit covers both.\n\n## Changelog\n- CR-001: combined services\n`,
+    "pm-1",
+    "pm",
+  );
+  await goto(page, h, "docs/prd");
+  await expect(page.getByTestId("change-callout")).toBeVisible();
+  await expect(page.getByTestId("gate-bar")).toContainText("CR-001 updated the PRD");
+  await shot(page, "change-review");
+
+  await page.goto(`${h.server.url}/#/open?path=${encodeURIComponent(h.dir)}`);
+  await expect(page.getByTestId("folder-picker")).toBeVisible();
+  await expect(page.getByTestId("fs-entry-fade-and-co")).toBeVisible();
+  await shot(page, "folder-picker");
+  await page.getByTestId("folder-picker").getByRole("button", { name: "Cancel" }).click();
+
   await page.goto(`${h.server.url}/#/`);
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
   await shot(page, "projects");
 
   const files = fs.readdirSync(OUT).filter((f) => f.endsWith(".png"));
-  expect(files.length).toBeGreaterThanOrEqual(20);
+  expect(files.length).toBeGreaterThanOrEqual(25);
 });

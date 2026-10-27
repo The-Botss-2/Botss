@@ -7,6 +7,8 @@ export type StreamEvent =
   | { kind: "init"; sessionId: string; model?: string; tools?: string[] }
   | { kind: "tool"; tool: string; summary: string; file?: string; toolUseId?: string; input: Record<string, unknown> }
   | { kind: "text"; text: string }
+  /** Per-API-call usage on assistant messages, for a live token count before the final result. */
+  | { kind: "usage"; usage: UsageTotals }
   | { kind: "tool_result"; toolUseId?: string; isError: boolean; text: string }
   | { kind: "retry"; error: string; attempt?: number; delayMs?: number }
   | { kind: "rate_limit"; status: string; resetsAt?: number }
@@ -136,6 +138,7 @@ export function parseStreamLine(line: string): StreamEvent[] {
       break;
     }
     case "assistant": {
+      if (ev.message?.usage) out.push({ kind: "usage", usage: toUsage(ev.message.usage) });
       for (const block of ev.message?.content ?? []) {
         if (block?.type === "tool_use") {
           const s = summarizeTool(String(block.name), (block.input ?? {}) as Record<string, unknown>);

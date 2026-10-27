@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from "@ta
 import { api, docPath, pp } from "./api";
 import type {
   Agent,
+  ChangeRequest,
+  FsHome,
+  Transcript,
   DesignInfo,
   DocDetail,
   DocRow,
@@ -58,6 +61,15 @@ export const useDocVersion = (pid: string, name: string, v: number | null) =>
   });
 export const useAgents = (pid: string) => useP<Agent[]>(pid, "agents", "/agents");
 export const useRuns = (pid: string) => useP<Run[]>(pid, "runs", "/runs");
+export const useChanges = (pid: string) =>
+  useP<ChangeRequest[]>(pid, "changes", "/changes", [], { retry: false });
+export const useTranscript = (pid: string, rid: string | null, live: boolean) =>
+  useP<Transcript>(pid, "runs", `/runs/${encodeURIComponent(rid ?? "")}/transcript`, [], {
+    enabled: Boolean(rid) && !live,
+    retry: false,
+  });
+export const useFsHome = () =>
+  useQuery({ queryKey: ["fs-home"], queryFn: () => api<FsHome>("GET", "/api/fs/home"), retry: false });
 export const usePlan = (pid: string) => useP<PlanInfo>(pid, "tasks", "/plan");
 export const useUsage = (pid: string) =>
   useP<UsageInfo>(pid, "usage", "/usage", [], { refetchInterval: 30_000 });

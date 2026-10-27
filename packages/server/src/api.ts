@@ -555,7 +555,18 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
           for (const ev of parseStreamLine(line)) {
             if (ev.kind === "init") items.push({ kind: "init", text: ev.model ?? "" });
             else if (ev.kind === "text") items.push({ kind: "text", text: ev.text });
-            else if (ev.kind === "tool") items.push({ kind: "tool", tool: ev.tool, file: ev.file ?? null, input: ev.input, toolUseId: ev.toolUseId ?? null, text: ev.summary });
+            else if (ev.kind === "tool") {
+              // Same relative paths as the live run.tool events.
+              const rel = (f: unknown) => {
+                if (typeof f !== "string" || !path.isAbsolute(f) || !run.cwd) return f;
+                const r = path.relative(String(run.cwd), f);
+                return r.startsWith("..") || path.isAbsolute(r) ? f : r.split(path.sep).join("/");
+              };
+              const file = rel(ev.file ?? null) as string | null;
+              const input = ev.input.file_path ? { ...ev.input, file_path: rel(ev.input.file_path) } : ev.input;
+              const text = ev.file && file && file !== ev.file ? ev.summary.replace(ev.file, file) : ev.summary;
+              items.push({ kind: "tool", tool: ev.tool, file, input, toolUseId: ev.toolUseId ?? null, text });
+            }
             else if (ev.kind === "tool_result") items.push({ kind: "result", toolUseId: ev.toolUseId ?? null, isError: ev.isError, text: ev.text });
             else if (ev.kind === "result") items.push({ kind: "final", isError: ev.isError, text: ev.text });
           }
@@ -621,7 +632,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       human(req);
       const p = project(req);
       const { agent, action } = req.params as { agent: string; action: string };
-      if (action === "kill" || action === "pause") await p.orch.killAgent(agent);
+      if (action === "kill" || action === "pause") await p.orch.killAgent(agent, action);
       else if (action === "resume") {
         for (const t of p.svc.tasks()) if (t.hold === "paused" && t.assignee === agent) p.orch.resumeTask(t.id);
       } else throw new ServiceError(`unknown action ${action}`, 2);

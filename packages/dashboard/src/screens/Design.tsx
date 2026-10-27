@@ -1,17 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "../components/Markdown";
 import { optionColors, QuestionCard } from "../components/QuestionCard";
-import { Badge, Empty, ErrorBox, Loadable, PageHeader, Skeleton } from "../components/ui";
+import { Badge, Empty, ErrorBox, Loadable, Modal, PageHeader, Skeleton } from "../components/ui";
 import { api, pp } from "../lib/api";
 import { useQuery } from "@tanstack/react-query";
-import { useDesign } from "../lib/queries";
+import { useDesign, useDoc, useProject } from "../lib/queries";
 import type { Question } from "../lib/types";
+import { GateBar } from "./Docs";
 
 export function DesignScreen({ pid }: { pid: string }) {
   const q = useDesign(pid);
+  const project = useProject(pid);
+  const inDesign = project.data?.phase === "design";
+  const designDoc = useDoc(pid, inDesign ? "design" : null);
   return (
     <div>
       <PageHeader title="Design" kicker="direction · tokens · screens" />
+      {inDesign && designDoc.data && (
+        <GateBar pid={pid} name="design" doc={designDoc.data} project={project.data} sticky />
+      )}
       <Loadable q={q} rows={8}>
         {(d) => (
           <div className="flex flex-col gap-10">
@@ -19,7 +26,12 @@ export function DesignScreen({ pid }: { pid: string }) {
               <h2 id="dir-h" className="section-title mb-3">
                 VISUAL DIRECTION
               </h2>
-              <Directions pid={pid} directions={d.directions} choice={d.choice} />
+              <Directions
+                pid={pid}
+                directions={d.directions}
+                choice={d.choice}
+                previews={d.directionPreviews ?? []}
+              />
             </section>
             <section aria-labelledby="tok-h">
               <h2 id="tok-h" className="section-title mb-3">
@@ -58,17 +70,21 @@ function Directions({
   pid,
   directions,
   choice,
+  previews,
 }: {
   pid: string;
   directions: Question[];
   choice: string | null;
+  previews: string[];
 }) {
+  const extra = (key: string) =>
+    previews.includes(`${key}.html`) ? <DirectionPreview pid={pid} file={`${key}.html`} /> : null;
   const open = directions.filter((d) => d.status === "open");
   if (open.length) {
     return (
       <div className="flex flex-col gap-4">
         {open.map((q) => (
-          <QuestionCard key={q.id} pid={pid} q={q} rich />
+          <QuestionCard key={q.id} pid={pid} q={q} rich optionExtra={extra} />
         ))}
       </div>
     );
@@ -328,7 +344,17 @@ function Screens({ pid, screens }: { pid: string; screens: string[] }) {
 }
 
 /** A sandboxed srcdoc iframe rendered at a device width and scaled down to fit the column. */
-export function ScaledFrame({ html, width, title }: { html: string; width: number; title: string }) {
+export function ScaledFrame({
+  html,
+  width,
+  title,
+  height: fixedHeight,
+}: {
+  html: string;
+  width: number;
+  title: string;
+  height?: number;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const [avail, setAvail] = useState(width);
   useEffect(() => {
@@ -340,7 +366,7 @@ export function ScaledFrame({ html, width, title }: { html: string; width: numbe
     return () => ro.disconnect();
   }, []);
   const scale = Math.min(1, avail / width);
-  const height = width > 600 ? 800 : 780;
+  const height = fixedHeight ?? (width > 600 ? 800 : 780);
   return (
     <div ref={box} className="w-full">
       <div
@@ -361,6 +387,60 @@ export function ScaledFrame({ html, width, title }: { html: string; width: numbe
           }}
         />
       </div>
+    </div>
+  );
+}
+
+/** Thumbnail of a direction's HTML preview (designer writes design/directions/<key>.html); click to expand. */
+function DirectionPreview({ pid, file }: { pid: string; file: string }) {
+  const [open, setOpen] = useState(false);
+  const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
+  const html = useQuery({
+    queryKey: ["p", pid, "docs", "direction", file],
+    queryFn: () =>
+      api<string>("GET", pp(pid, `/design/screen?name=${encodeURIComponent(file)}&dir=directions`)),
+  });
+  if (html.error) return <div className="mt-2 text-[11.5px] text-ink-3">Preview unavailable</div>;
+  if (html.data === undefined) return <div className="skeleton mt-2 h-28" />;
+  return (
+    <div className="mt-2" data-testid={`direction-preview-${file}`}>
+      <div className="pointer-events-none">
+        <ScaledFrame html={html.data} width={1280} height={720} title={`Direction ${file} preview`} />
+      </div>
+      <button
+        type="button"
+        className="btn btn-sm mt-1.5"
+        onClick={(e) => {
+          e.preventDefault();
+          setOpen(true);
+        }}
+      >
+        Expand preview
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Direction ${file.replace(/\.html$/, "")}`}
+        wide
+      >
+        <div className="mb-2 flex justify-end gap-1" role="group" aria-label="Device width">
+          {(["desktop", "mobile"] as const).map((d) => (
+            <button
+              key={d}
+              className={`btn btn-sm ${device === d ? "btn-primary" : ""}`}
+              aria-pressed={device === d}
+              onClick={() => setDevice(d)}
+            >
+              {d === "desktop" ? "Desktop 1280" : "Mobile 390"}
+            </button>
+          ))}
+        </div>
+        <ScaledFrame
+          html={html.data}
+          width={device === "desktop" ? 1280 : 390}
+          title={`Direction ${file} expanded`}
+        />
+      </Modal>
     </div>
   );
 }

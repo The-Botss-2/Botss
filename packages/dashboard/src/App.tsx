@@ -36,7 +36,7 @@ export function App() {
       {route.pid ? (
         <ProjectRoute pid={route.pid} screen={route.screen} rest={route.rest} />
       ) : (
-        <ProjectsScreen />
+        <ProjectsScreen openPath={route.screen === "open" ? (route.params.get("path") ?? "") : null} />
       )}
       <Toaster />
     </>

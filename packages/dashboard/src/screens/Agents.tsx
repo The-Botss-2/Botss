@@ -1,32 +1,32 @@
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { TranscriptView, useRunItems } from "../components/LiveTranscript";
 import {
   AgentName,
   Badge,
   Empty,
-  ErrorBox,
+  Icon,
   Loadable,
+  Modal,
   PageHeader,
   RoleChip,
-  Skeleton,
-  Tabs,
   toast,
   toastError,
 } from "../components/ui";
-import { api, pp } from "../lib/api";
-import { useEvents } from "../lib/live";
-import { fmtAgo, fmtElapsed, fmtTime, fmtTokens, toDate } from "../lib/format";
+import { fmtAgo, fmtElapsed, fmtTokens, toDate } from "../lib/format";
 import { roleColor } from "../lib/roles";
 import { useAction, useAgents, useRuns, useTasks } from "../lib/queries";
 import { href } from "../lib/router";
 import { useNow } from "../lib/theme";
-import type { Agent, BotssEvent, Run } from "../lib/types";
-import { Glyph } from "./Feed";
+import type { Agent, Run } from "../lib/types";
+
+// "The office": every working agent is a live panel with its transcript streaming in; idle agents sit in a row.
 
 export function AgentsScreen({ pid }: { pid: string }) {
   const agents = useAgents(pid);
   const runs = useRuns(pid);
   const tasks = useTasks(pid);
+  const [focus, setFocus] = useState<string | null>(null);
+  const [inspect, setInspect] = useState<string | null>(null);
   // /agents only carries the current run; idle agents show their most recent run from /runs.
   const lastRun = new Map<string, Run>();
   for (const r of runs.data ?? []) {
@@ -36,229 +36,293 @@ export function AgentsScreen({ pid }: { pid: string }) {
   const paused = new Set(
     (tasks.data ?? []).filter((t) => t.hold === "paused" && t.assignee).map((t) => t.assignee!),
   );
+
   return (
     <div>
-      <PageHeader title="Agents" kicker="who is working on what, right now">
+      <PageHeader title="Agents" kicker="watch the team work, live">
         {agents.data && (
-          <span className="mono text-[12px] text-ink-3">
-            {agents.data.filter((a) => a.active).length} active · {agents.data.length} on the team
+          <span className="mono text-[12px] text-ink-3" data-testid="agents-count">
+            {agents.data.filter((a) => a.active).length} working · {agents.data.length} on the team
           </span>
         )}
       </PageHeader>
       <Loadable q={agents} rows={6}>
-        {(list) =>
-          list.length === 0 ? (
-            <Empty title="No agents yet">
-              Agents join the team the first time the scheduler gives them work.
-            </Empty>
-          ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(360px,1fr))] gap-3">
-              {[...list]
-                .sort(
-                  (a, b) =>
-                    Number(b.active) - Number(a.active) ||
-                    a.id.localeCompare(b.id, undefined, { numeric: true }),
-                )
-                .map((a) => (
-                  <AgentCard
-                    key={a.id}
-                    pid={pid}
-                    a={a}
-                    lastRun={lastRun.get(a.id) ?? null}
-                    hasPaused={paused.has(a.id)}
-                  />
-                ))}
+        {(list) => {
+          if (!list.length)
+            return (
+              <Empty title="No agents yet">
+                Agents join the team the first time the scheduler gives them work.
+              </Empty>
+            );
+          const sorted = [...list].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+          const active = sorted.filter((a) => a.active);
+          const idle = sorted.filter((a) => !a.active);
+          const focused = active.find((a) => a.id === focus) ?? null;
+          const others = focused ? active.filter((a) => a !== focused) : active;
+          const inspected = idle.find((a) => a.id === inspect) ?? null;
+          return (
+            <div className="flex flex-col gap-6">
+              {active.length === 0 ? (
+                <Empty title="Nobody is working right now">
+                  When the scheduler starts a run, the agent's panel appears here and its thinking, edits and
+                  commands stream in live.
+                </Empty>
+              ) : (
+                <>
+                  {focused && (
+                    <AgentPanel
+                      key={`f-${focused.id}`}
+                      pid={pid}
+                      a={focused}
+                      run={focused.run}
+                      live
+                      focused
+                      onFocus={() => setFocus(null)}
+                      height="h-[68vh]"
+                    />
+                  )}
+                  {others.length > 0 && (
+                    <div
+                      className={`grid gap-3 ${others.length === 1 ? "grid-cols-1" : "grid-cols-2 max-[1100px]:grid-cols-1"}`}
+                      data-testid="live-panels"
+                    >
+                      {others.map((a) => (
+                        <AgentPanel
+                          key={a.id}
+                          pid={pid}
+                          a={a}
+                          run={a.run}
+                          live
+                          focused={false}
+                          onFocus={() => setFocus(a.id)}
+                          height={others.length <= 2 && !focused ? "h-[62vh]" : "h-[440px]"}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {idle.length > 0 && (
+                <section aria-labelledby="idle-h">
+                  <h2 id="idle-h" className="section-title mb-2">
+                    IDLE · {idle.length}
+                  </h2>
+                  <div className="flex flex-wrap gap-2">
+                    {idle.map((a) => (
+                      <IdleChip
+                        key={a.id}
+                        pid={pid}
+                        a={a}
+                        last={lastRun.get(a.id) ?? null}
+                        hasPaused={paused.has(a.id)}
+                        selected={inspect === a.id}
+                        onSelect={() => setInspect(inspect === a.id ? null : a.id)}
+                      />
+                    ))}
+                  </div>
+                  {inspected && (
+                    <div className="mt-3">
+                      <AgentPanel
+                        pid={pid}
+                        a={inspected}
+                        run={lastRun.get(inspected.id) ?? null}
+                        live={false}
+                        focused
+                        onFocus={() => setInspect(null)}
+                        height="h-[52vh]"
+                      />
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
-          )
-        }
+          );
+        }}
       </Loadable>
     </div>
   );
 }
 
-function AgentCard({
+function AgentPanel({
   pid,
   a,
-  lastRun,
-  hasPaused,
+  run,
+  live,
+  focused,
+  onFocus,
+  height,
 }: {
   pid: string;
   a: Agent;
-  lastRun: Run | null;
-  hasPaused: boolean;
+  run: Run | null;
+  live: boolean;
+  focused: boolean;
+  onFocus: () => void;
+  height: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const now = useNow(1000, a.active);
+  const now = useNow(1000, live);
+  const [kill, setKill] = useState(false);
   const pause = useAction(pid, "POST", `/agents/${encodeURIComponent(a.id)}/pause`, ["agents", "tasks"]);
-  const resume = useAction(pid, "POST", `/agents/${encodeURIComponent(a.id)}/resume`, ["agents", "tasks"]);
-  const run = a.run ?? lastRun;
+  const killA = useAction(pid, "POST", `/agents/${encodeURIComponent(a.id)}/kill`, ["agents", "tasks"]);
+  const { items, lastTs, loading } = useRunItems(pid, run?.id ?? null, live);
   const started = toDate(run?.started_at)?.getTime();
+  const ended = toDate(run?.ended_at)?.getTime();
   const tokens = run ? run.input_tokens + run.output_tokens + run.cache_creation_tokens : 0;
-  const lastAction = (a.active ? (run?.last_action ?? a.last_action) : a.last_action) ?? null;
-  const lastFile = (a.active ? (run?.last_file ?? a.last_file) : a.last_file) ?? null;
-
+  const color = roleColor(a.role);
   return (
     <article
-      className="flex flex-col border border-rule bg-surface"
-      style={{ boxShadow: `inset 3px 0 0 ${roleColor(a.role)}` }}
+      className={`flex flex-col border border-rule bg-surface ${height}`}
       data-testid={`agent-${a.id}`}
+      aria-label={`${a.id} live panel`}
     >
-      <header className="flex items-center gap-2 px-4 pt-3">
+      <header
+        className="flex flex-wrap items-center gap-2 border-b border-rule px-3 py-2"
+        style={{ boxShadow: `inset 0 3px 0 ${color}` }}
+      >
         <AgentName id={a.id} className="text-[14px]" />
         <RoleChip role={a.role} short />
+        {(a.current_task ?? run?.task) && (
+          <a
+            className="mono text-[12px] font-medium underline-offset-2 hover:underline"
+            href={href(pid, "board", (a.current_task ?? run?.task)!)}
+          >
+            {a.current_task ?? run?.task}
+          </a>
+        )}
+        {run && <span className="mono text-[11px] text-ink-3">{run.stage}</span>}
         <span className="ml-auto flex items-center gap-1.5 text-[11.5px]">
           <span
-            className={`h-2 w-2 rounded-full ${a.active ? "pulse-dot" : ""}`}
-            style={{ background: a.active ? "var(--ok)" : "var(--rule-strong)" }}
+            className={`h-2 w-2 rounded-full ${live ? "pulse-dot" : ""}`}
+            style={{ background: live ? "var(--ok)" : "var(--rule-strong)" }}
             aria-hidden
           />
-          <span className={a.active ? "text-ok" : "text-ink-3"}>{a.active ? "working" : a.status}</span>
+          <span className={live ? "text-ok" : "text-ink-3"}>
+            {live ? "working" : run?.ended_at ? `ended ${fmtAgo(run.ended_at)}` : a.status}
+          </span>
         </span>
-      </header>
-      <div className="px-4 py-2">
-        <div className="mono flex items-center gap-2 text-[11.5px] text-ink-3">
-          {a.current_task ? (
-            <a
-              className="font-medium text-ink underline-offset-2 hover:underline"
-              href={href(pid, "board", a.current_task)}
-            >
-              {a.current_task}
-            </a>
-          ) : (
-            <span>no task</span>
-          )}
-          {run && <span>· {run.stage}</span>}
-          {run && <span>· {run.id}</span>}
-          <span className="ml-auto">ports {a.port_block}+</span>
-        </div>
-        <div className="mt-2 min-h-[38px] border-l-2 border-rule-strong pl-2.5">
-          <div className="truncate text-[13px]" title={lastAction ?? undefined} data-testid="agent-action">
-            {lastAction ?? <span className="text-ink-3">idle</span>}
-          </div>
-          {lastFile && <div className="mono truncate text-[11.5px] text-ink-3">{lastFile}</div>}
-        </div>
-      </div>
-      <div className="grid grid-cols-3 border-t border-rule">
-        <Metric
-          label="elapsed"
-          value={
-            run && started
-              ? fmtElapsed((run.ended_at ? (toDate(run.ended_at)?.getTime() ?? now) : now) - started)
-              : "-"
-          }
-        />
-        <Metric label="tokens" value={fmtTokens(tokens)} />
-        <Metric label="turns" value={String(run?.turns ?? 0)} />
-      </div>
-      <footer className="flex items-center gap-2 border-t border-rule px-3 py-2">
-        <button className="btn btn-sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide activity" : "Show activity"}
-        </button>
-        {run?.ended_at && (
-          <span className="mono text-[11px] text-ink-3">last run {fmtAgo(run.ended_at)}</span>
-        )}
-        <span className="ml-auto" />
-        {a.active ? (
-          <button
-            className="btn btn-sm"
-            onClick={() =>
-              pause.mutate(undefined, {
-                onSuccess: () => toast(`${a.id} paused; its task is on hold`),
-                onError: toastError,
-              })
-            }
-            disabled={pause.isPending}
-          >
-            Pause
-          </button>
-        ) : (
-          hasPaused && (
+        <span className="mono text-[11.5px] tabular" title="elapsed">
+          {started ? fmtElapsed((ended ?? now) - started) : "-"}
+        </span>
+        <span className="mono text-[11.5px] text-ink-3 tabular" title="tokens">
+          {fmtTokens(tokens)} tok
+        </span>
+        {live && (
+          <>
             <button
               className="btn btn-sm"
               onClick={() =>
-                resume.mutate(undefined, { onSuccess: () => toast(`${a.id} resumed`), onError: toastError })
+                pause.mutate(undefined, {
+                  onSuccess: () => toast(`${a.id} paused; its task is on hold`),
+                  onError: toastError,
+                })
               }
-              disabled={resume.isPending}
+              disabled={pause.isPending}
             >
-              Resume
+              <Icon name="pause" size={12} /> Pause
             </button>
-          )
+            <button className="btn btn-sm btn-danger" onClick={() => setKill(true)}>
+              Kill
+            </button>
+          </>
         )}
-      </footer>
-      {open && <AgentActivity pid={pid} a={a} />}
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={onFocus}
+          aria-label={focused ? "Back to all agents" : `Focus ${a.id}`}
+          title={focused ? "Back to grid" : "Focus"}
+        >
+          {focused ? <Icon name="close" size={12} /> : "⤢"}
+        </button>
+      </header>
+      <TranscriptView
+        items={items}
+        active={live}
+        lastTs={lastTs}
+        role={a.role}
+        loading={loading}
+        emptyText={run ? "Waiting for the first action…" : "No runs yet."}
+      />
+      <Modal
+        open={kill}
+        onClose={() => setKill(false)}
+        title={`Kill ${a.id}'s run?`}
+        footer={
+          <>
+            <button className="btn" onClick={() => setKill(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn btn-danger"
+              onClick={() =>
+                killA.mutate(undefined, {
+                  onSuccess: () => {
+                    setKill(false);
+                    toast(`${a.id} stopped`);
+                  },
+                  onError: toastError,
+                })
+              }
+            >
+              Kill run
+            </button>
+          </>
+        }
+      >
+        The Claude Code process is stopped now. Its task goes on hold with the work kept in the worktree;
+        Resume picks it up on the same session.
+      </Modal>
     </article>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function IdleChip({
+  pid,
+  a,
+  last,
+  hasPaused,
+  selected,
+  onSelect,
+}: {
+  pid: string;
+  a: Agent;
+  last: Run | null;
+  hasPaused: boolean;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const resume = useAction(pid, "POST", `/agents/${encodeURIComponent(a.id)}/resume`, ["agents", "tasks"]);
   return (
-    <div className="border-r border-rule px-3 py-1.5 last:border-r-0">
-      <div className="mono text-[10px] text-ink-3">{label}</div>
-      <div className="mono text-[13px] font-semibold tabular">{value}</div>
-    </div>
-  );
-}
-
-function AgentActivity({ pid, a }: { pid: string; a: Agent }) {
-  const [tab, setTab] = useState<"events" | "stream">("events");
-  const { events } = useEvents(pid);
-  const runId = a.current_run ?? a.run?.id ?? null;
-  const mine: BotssEvent[] = events
-    .filter((e) => e.actor === a.id)
-    .slice(-40)
-    .reverse();
-  const stream = useQuery({
-    queryKey: ["p", pid, "runs", "stream", runId],
-    queryFn: () => api<{ lines: string[] }>("GET", pp(pid, `/runs/${runId}/stream`)),
-    enabled: tab === "stream" && Boolean(runId),
-    refetchInterval: a.active ? 3000 : false,
-  });
-  return (
-    <div className="border-t border-rule bg-paper px-3 py-2">
-      <Tabs
-        label={`${a.id} activity`}
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: "events", label: "Recent events" },
-          { id: "stream", label: "Raw stream" },
-        ]}
-      />
-      <div className="max-h-72 overflow-y-auto pt-2">
-        {tab === "events" ? (
-          mine.length ? (
-            <ol>
-              {mine.map((e) => (
-                <li
-                  key={e.id}
-                  className="grid grid-cols-[58px_16px_minmax(0,1fr)] items-baseline gap-1.5 py-0.5 text-[12px]"
-                >
-                  <span className="mono text-[10.5px] text-ink-3">{fmtTime(e.ts)}</span>
-                  <Glyph type={e.type} />
-                  <span className="truncate text-ink-2" title={e.summary}>
-                    {e.summary}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-[12px] text-ink-3">No events from {a.id} in the loaded history.</p>
-          )
-        ) : !runId ? (
-          <p className="text-[12px] text-ink-3">No run yet.</p>
-        ) : stream.error ? (
-          <ErrorBox error={stream.error} />
-        ) : !stream.data ? (
-          <Skeleton rows={4} />
-        ) : (
-          <pre className="mono text-[10.5px] leading-snug whitespace-pre-wrap text-ink-2">
-            {stream.data.lines.slice(-120).join("\n") || "(empty)"}
-          </pre>
-        )}
-      </div>
-      <div className="pt-1">
-        <Badge>{runId ?? "no run"}</Badge>
-      </div>
+    <div
+      className={`flex items-center gap-2 border bg-surface px-2.5 py-1.5 text-[12px] ${selected ? "border-ink" : "border-rule"}`}
+      style={{ boxShadow: `inset 3px 0 0 ${roleColor(a.role)}` }}
+      data-testid={`agent-${a.id}`}
+    >
+      <button
+        className="flex items-center gap-2 text-left"
+        onClick={onSelect}
+        aria-expanded={selected}
+        title="Show the last run"
+      >
+        <AgentName id={a.id} className="text-[12px]" />
+        <span className="max-w-[220px] truncate text-ink-3">{a.last_action ?? "idle"}</span>
+        {last?.ended_at && <span className="mono text-[10.5px] text-ink-3">{fmtAgo(last.ended_at)}</span>}
+      </button>
+      {hasPaused ? (
+        <>
+          <Badge tone="warn">paused</Badge>
+          <button
+            className="btn btn-sm"
+            onClick={() =>
+              resume.mutate(undefined, { onSuccess: () => toast(`${a.id} resumed`), onError: toastError })
+            }
+          >
+            Resume
+          </button>
+        </>
+      ) : (
+        <span className="mono text-[10.5px] text-ink-3">idle</span>
+      )}
     </div>
   );
 }

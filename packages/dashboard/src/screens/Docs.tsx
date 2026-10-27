@@ -19,6 +19,20 @@ import { fmtDateTime } from "../lib/format";
 import { useAction, useDoc, useDocs, useDocVersion, useProject } from "../lib/queries";
 import { href } from "../lib/router";
 import { DOC_GATE, PHASE_GATE, type DocDetail, type DocRow, type ProjectInfo } from "../lib/types";
+import { ChangeCallout, ChangesList } from "../components/Changes";
+
+/** Is the owner's gate for this document open? Phase gates, plus prd/plan while a change request waits for review. */
+export function gateOpenFor(name: string, project: ProjectInfo | undefined, docStatus?: string): boolean {
+  const gate = DOC_GATE[name];
+  if (!gate || !project) return false;
+  const ch = project.activeChange;
+  if (gate === "prd" && ch?.status === "prd_review") return true;
+  if (gate === "plan" && ch?.status === "plan_review") return true;
+  if (PHASE_GATE[project.phase] !== gate) return false;
+  // The design gate opens once the designer submitted the screens.
+  if (gate === "design" && docStatus !== undefined) return docStatus === "submitted";
+  return true;
+}
 
 const ORDER = ["idea", "prd", "design", "architecture", "plan", "release"];
 
@@ -72,8 +86,7 @@ export function DocsScreen({ pid, name }: { pid: string; name: string | null }) 
                     {g.group && <div className="mono mb-1 text-[10.5px] text-ink-3">{g.group}/</div>}
                     <ul className="flex flex-col">
                       {g.docs.map((d) => {
-                        const gate = DOC_GATE[d.name];
-                        const open = gate && project.data && PHASE_GATE[project.data.phase] === gate;
+                        const open = gateOpenFor(d.name, project.data, d.status);
                         return (
                           <li key={d.name}>
                             <a
@@ -103,8 +116,13 @@ export function DocsScreen({ pid, name }: { pid: string; name: string | null }) 
             )
           }
         </Loadable>
+        <div className="mt-6">
+          <h2 className="section-title mb-2">CHANGES</h2>
+          <ChangesList pid={pid} compact />
+        </div>
       </aside>
       <section className="min-w-0">
+        <ChangeCallout pid={pid} p={project.data} />
         {selected ? (
           <DocView key={selected} pid={pid} name={selected} project={project.data} />
         ) : docs.isLoading ? (
@@ -499,19 +517,20 @@ function Comments({ pid, doc }: { pid: string; doc: DocDetail }) {
 
 // ---------------------------------------------------------------------------------------------- gates
 
-function GateBar({
+export function GateBar({
   pid,
   name,
   doc,
   project,
+  sticky = false,
 }: {
   pid: string;
   name: string;
   doc: DocDetail;
   project: ProjectInfo | undefined;
+  sticky?: boolean;
 }) {
   const gate = DOC_GATE[name];
-  const openGate = project ? PHASE_GATE[project.phase] : undefined;
   const [mode, setMode] = useState<null | "approve" | "changes">(null);
   const [comment, setComment] = useState("");
   const act = useAction<{ comment?: string }>(
@@ -521,7 +540,11 @@ function GateBar({
     ["docs", "project", "tasks"],
   );
   if (!gate) return null;
-  const isOpen = openGate === gate;
+  const isOpen = gateOpenFor(name, project, doc.status);
+  const changeReview =
+    project?.activeChange && ["prd_review", "plan_review"].includes(project.activeChange.status)
+      ? project.activeChange
+      : null;
   if (!isOpen)
     return doc.status === "approved" ? (
       <div className="mb-4 flex items-center gap-2 border border-[color-mix(in_srgb,var(--ok)_40%,transparent)] bg-ok-soft px-4 py-2 text-[13px] text-ok">
@@ -530,15 +553,27 @@ function GateBar({
     ) : null;
   return (
     <div
-      className="mb-4 flex flex-wrap items-center gap-3 border border-l-4 border-rule border-l-[var(--danger)] bg-surface px-4 py-3"
+      className={`mb-4 flex flex-wrap items-center gap-3 border border-l-4 border-rule border-l-[var(--danger)] bg-surface px-4 py-3 ${sticky ? "sticky top-0 z-20 shadow-md" : ""}`}
       data-testid="gate-bar"
     >
       <div className="flex-1 text-[13.5px]">
-        <span className="font-semibold">Your review is needed.</span>{" "}
-        <span className="text-ink-2">
-          The {gate} gate is open: approve v{doc.version} to move on, or request changes with a comment for
-          the author.
-        </span>
+        {gate === "design" ? (
+          <>
+            <span className="font-semibold">
+              Review the screens, then approve the design or ask for changes.
+            </span>{" "}
+            <span className="text-ink-2">Approving moves the team on to the architecture.</span>
+          </>
+        ) : (
+          <>
+            <span className="font-semibold">Your review is needed.</span>{" "}
+            <span className="text-ink-2">
+              {changeReview && (gate === "prd" || gate === "plan")
+                ? `${changeReview.id} updated the ${gate === "prd" ? "PRD" : "plan"}: approve v${doc.version} to continue the change, or request changes.`
+                : `The ${gate} gate is open: approve v${doc.version} to move on, or request changes with a comment for the author.`}
+            </span>
+          </>
+        )}
       </div>
       <button className="btn" onClick={() => setMode("changes")}>
         Request changes

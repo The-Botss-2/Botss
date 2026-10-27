@@ -33,7 +33,7 @@ export function IdeaScreen({ pid }: { pid: string }) {
     <Loadable q={project}>
       {(p) =>
         p.phase === "idea" ? (
-          <IdeaForm pid={pid} />
+          <IdeaForm pid={pid} existing={Boolean(p.settings.existing)} />
         ) : (
           <div className="max-w-3xl">
             <PageHeader title="The idea" kicker="submitted · read only" />
@@ -91,8 +91,9 @@ export function IdeaScreen({ pid }: { pid: string }) {
   );
 }
 
-function IdeaForm({ pid }: { pid: string }) {
+function IdeaForm({ pid, existing }: { pid: string; existing: boolean }) {
   const [text, setText] = useState("");
+  const [kind, setKind] = useState<"new" | "feature" | "fix">(existing ? "feature" : "new");
   const [stakes, setStakes] = useState("internal tool");
   const [links, setLinks] = useState<string[]>([]);
   const [link, setLink] = useState("");
@@ -101,6 +102,7 @@ function IdeaForm({ pid }: { pid: string }) {
   const submit = useAction<{
     text: string;
     stakes: string;
+    kind: string;
     links: string[];
     attachments: { name: string; data: string }[];
   }>(pid, "POST", "/idea", ["project", "docs", "tasks"]);
@@ -128,32 +130,92 @@ function IdeaForm({ pid }: { pid: string }) {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader title="What should the team build?" kicker="phase 0 · idea" />
+      <PageHeader
+        title={existing ? "What should the team change?" : "What should the team build?"}
+        kicker={existing ? "phase 0 · existing codebase" : "phase 0 · idea"}
+      />
+      {existing && (
+        <div
+          className="mb-5 border border-l-4 border-rule border-l-[var(--accent)] bg-surface px-4 py-3 text-[13px] text-ink-2"
+          data-testid="existing-note"
+        >
+          The tech lead will first read your codebase and summarize it (Documents → codebase).
+        </div>
+      )}
       <form
         className="flex flex-col gap-5"
         onSubmit={(e) => {
           e.preventDefault();
           submit.mutate(
-            { text, stakes, links, attachments: atts.map(({ name, data }) => ({ name, data })) },
-            { onSuccess: () => toast("Idea submitted. The product manager is reading it.") },
+            { text, stakes, kind, links, attachments: atts.map(({ name, data }) => ({ name, data })) },
+            {
+              onSuccess: () =>
+                toast(
+                  existing
+                    ? "Request submitted. The team is reading your codebase."
+                    : "Idea submitted. The product manager is reading it.",
+                ),
+            },
           );
         }}
       >
+        {existing && (
+          <fieldset>
+            <legend className="label">Kind of change</legend>
+            <div className="flex gap-2">
+              {(
+                [
+                  ["feature", "New feature", "Add or extend behaviour."],
+                  ["fix", "Fix", "Something is broken or wrong."],
+                ] as const
+              ).map(([v, label, hint]) => (
+                <label
+                  key={v}
+                  className={`flex-1 cursor-pointer border p-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--focus)] ${kind === v ? "border-ink bg-surface" : "border-rule hover:border-rule-strong"}`}
+                  data-testid={`kind-${v}`}
+                >
+                  <input
+                    type="radio"
+                    name="kind"
+                    className="sr-only"
+                    value={v}
+                    checked={kind === v}
+                    onChange={() => setKind(v)}
+                  />
+                  <div className="text-[13px] font-semibold">{label}</div>
+                  <div className="mt-0.5 text-[12px] text-ink-3">{hint}</div>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         <div>
           <label className="label" htmlFor="idea-text">
-            Describe the app
+            {existing
+              ? kind === "fix"
+                ? "Describe the problem"
+                : "Describe the change"
+              : "Describe the app"}
           </label>
           <textarea
             id="idea-text"
             className="field min-h-[220px] text-[14px] leading-relaxed"
-            placeholder="A booking app for my barbershop: customers pick a barber and a slot, pay a deposit, and get a reminder the day before. I want to see tomorrow's schedule on my phone…"
+            placeholder={
+              existing
+                ? kind === "fix"
+                  ? "When a customer cancels within 4 hours, the deposit is still refunded. It should be kept. Steps: book a slot, cancel 2 hours before, check Stripe…"
+                  : "Add SMS reminders the evening before each booking, with an opt-out link. Barbers should see who opted out on the Today screen…"
+                : "A booking app for my barbershop: customers pick a barber and a slot, pay a deposit, and get a reminder the day before. I want to see tomorrow's schedule on my phone…"
+            }
             value={text}
             onChange={(e) => setText(e.target.value)}
             required
             minLength={3}
           />
           <div className="hint mt-1">
-            Who uses it, what they do, what must never go wrong. The PM asks follow-up questions next.
+            {existing
+              ? "What should change, for whom, and how you will know it works. The PM asks follow-up questions next."
+              : "Who uses it, what they do, what must never go wrong. The PM asks follow-up questions next."}
           </div>
         </div>
 

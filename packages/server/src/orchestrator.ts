@@ -56,6 +56,7 @@ interface ActiveRun {
   limited?: { resetsAt?: number };
   sawInit: boolean;
   cwd: string;
+  liveOutput?: number;
 }
 
 export class Orchestrator {
@@ -193,7 +194,8 @@ export class Orchestrator {
       for (const a of actions) {
         if (a.type === "promote") {
           const t = this.svc.task(a.task);
-          if (t && t.status === "todo" && (buildOpen || t.kind !== "build"))
+          // Tasks from an unapproved replan stay in todo.
+          if (t && t.status === "todo" && t.hold !== "plan" && (buildOpen || t.kind !== "build"))
             this.svc.setStatus(a.task, "ready", { reason: "dependencies done" });
         } else {
           const t = this.svc.task(a.task);
@@ -260,9 +262,11 @@ export class Orchestrator {
       return { cwd: t.worktree, branch: t.branch!, shared: false };
     const branch = t.branch ?? taskBranch(t.id, t.title);
     const dir = t.worktree ?? path.join(this.p.paths.worktrees, `${agent}-${t.id}`);
-    const base = await headSha(integ);
-    await ensureWorktree(this.p.paths.root, dir, branch, INTEGRATION_BRANCH);
-    this.svc.updateTask(t.id, { worktree: dir, branch, base_sha: t.base_sha ?? base });
+    const { created } = await ensureWorktree(this.p.paths.root, dir, branch, INTEGRATION_BRANCH);
+    // The base is the commit the branch actually started from. Reading the integration head separately could
+    // race a merge and make the task's diff include someone else's merged files.
+    const base = created ? await headSha(dir) : (t.base_sha ?? (await headSha(integ)));
+    this.svc.updateTask(t.id, { worktree: dir, branch, base_sha: t.base_sha && !created ? t.base_sha : base });
     return { cwd: dir, branch, shared: false };
   }
 
@@ -540,6 +544,17 @@ export class Orchestrator {
         if (ev.isError && /Botss guard/.test(ev.text)) this.svc.emit("run.blocked", ev.text.slice(0, 400), {}, meta);
         break;
       }
+      case "usage":
+        // Live estimate while the run works (output summed, input as of the latest call); the final result
+        // event replaces it with Claude Code's own totals.
+        run.liveOutput = (run.liveOutput ?? 0) + ev.usage.output_tokens;
+        this.svc.updateRun(run.runId, {
+          input_tokens: ev.usage.input_tokens,
+          output_tokens: run.liveOutput,
+          cache_creation_tokens: ev.usage.cache_creation_input_tokens,
+          cache_read_tokens: ev.usage.cache_read_input_tokens,
+        });
+        break;
       case "retry":
         this.svc.emit("run.retry", `API retry (${ev.error})`, { error: ev.error }, meta);
         break;
@@ -803,10 +818,21 @@ export class Orchestrator {
           resume: { session, prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }) },
         });
         break;
+      case "replan": {
+        // Approved while the replan was still merging: release the new tasks now.
+        const ch = this.changes().find((c) => c.id === t.meta.changeId);
+        if (ch?.status === "applied") this.releasePlanHolds();
+        break;
+      }
       default:
-        // screens → waits for the design gate; change / replan → wait for the PRD / plan gates.
+        // screens → waits for the design gate; change → waits for the PRD gate.
         break;
     }
+  }
+
+  private releasePlanHolds(): void {
+    for (const t of this.svc.tasks({ kind: ["build"] })) if (t.hold === "plan") this.svc.updateTask(t.id, { hold: null });
+    void this.tick();
   }
 
   // ------------------------------------------------------------------------------------ idea + gates
@@ -914,7 +940,10 @@ export class Orchestrator {
         }
       } else {
         if (team) this.svc.updateSettings({ team }, actor);
-        for (const t of this.svc.tasks({ kind: ["build"] })) if (t.hold === "plan") this.svc.updateTask(t.id, { hold: null });
+        // New tasks start only once the replan's task files are merged into botss/integration; if that merge
+        // is still running, onPlanningDone releases them.
+        const replanPending = this.svc.tasks({ kind: ["planning"] }).some((t) => t.meta.changeId === ch.id && t.mode === "replan" && t.status !== "done");
+        if (!replanPending) this.releasePlanHolds();
         this.setChange(ch.id, "applied");
         if (["release_review", "done"].includes(this.svc.phase)) this.reopenBuild();
         this.svc.emit("plan.approved", `Updated plan approved (${ch.id})`, { change: ch.id }, { actor });
@@ -1528,20 +1557,28 @@ export class Orchestrator {
     return runs.length;
   }
 
-  async killAgent(agent: string): Promise<void> {
+  /** Pause: stop the run and keep its session, so Resume continues where it was. Kill: stop the run and drop the
+   * session, so Resume starts the task over in a fresh session (useful when an agent went down a bad path). */
+  async killAgent(agent: string, mode: "pause" | "kill" = "pause"): Promise<void> {
     const r = [...this.active.values()].find((x) => x.agent === agent);
     if (!r) return;
     if (r.task) {
-      this.prepareRetry(
-        r.task,
-        r.sessionId,
-        "You were paused by the owner. Continue the task from where you left off.",
-      );
+      if (mode === "pause") {
+        this.prepareRetry(r.task, r.sessionId, "You were paused by the owner. Continue the task from where you left off.");
+      } else {
+        this.svc.patchMeta(r.task, { resume: null });
+        this.svc.updateTask(r.task, { session_id: null });
+      }
       this.svc.updateTask(r.task, { hold: "paused" });
     }
     await this.p.runner.kill(r.runId);
     await this.idle();
-    this.svc.emit("agent.paused", `Owner paused ${agent}`, {}, { actor: "human", task: r.task });
+    this.svc.emit(
+      mode === "pause" ? "agent.paused" : "agent.killed",
+      mode === "pause" ? `Owner paused ${agent}` : `Owner stopped ${agent}; the task restarts fresh when resumed`,
+      {},
+      { actor: "human", task: r.task },
+    );
   }
 
   resumeTask(taskId: string): void {

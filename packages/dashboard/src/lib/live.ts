@@ -100,6 +100,8 @@ export function useLive(pid: string, qc: QueryClient): void {
         // The project summary carries openQuestions, activeRuns and board counts, but the server's topicsFor() does not
         // list "project" for ask/run/task events, so the header would go stale. Refresh it alongside.
         if (t === "questions" || t === "agents" || t === "tasks") pending.add("project");
+        // Change requests have no topic of their own; they move with the project and its documents.
+        if (t === "project" || t === "docs" || t === "changes") pending.add("changes");
       }
       if (!flushTimer) flushTimer = setTimeout(flush, 150);
     };

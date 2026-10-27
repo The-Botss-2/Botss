@@ -9,6 +9,7 @@ import { GATES, PERMISSION_MODES, ROLES, type ProjectInfo, type Settings } from 
 const GATE_LABELS: Record<string, string> = {
   prd: "PRD approval",
   design_direction: "Design direction pick",
+  design: "Design (screens) approval",
   architecture: "Architecture approval",
   plan: "Plan & team approval",
   release: "Release approval",

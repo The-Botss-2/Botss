@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { QuestionCard } from "../components/QuestionCard";
+import { ChangeCallout, ChangesList } from "../components/Changes";
 import { AgentName, Empty, Icon, Loadable, PageHeader, toastError } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 import { useAction, useProject, useQuestions } from "../lib/queries";
@@ -15,6 +16,7 @@ export function QuestionsScreen({ pid }: { pid: string }) {
   return (
     <div className="max-w-4xl">
       <PageHeader title="Questions & alerts" kicker="inbox · the team is waiting on these" />
+      <ChangeCallout pid={pid} p={project.data} />
 
       {alerts.length > 0 && (
         <section aria-labelledby="alerts-h" className="mb-8">
@@ -125,6 +127,12 @@ export function QuestionsScreen({ pid }: { pid: string }) {
           );
         }}
       </Loadable>
+      <section aria-labelledby="changes-h" className="mt-10">
+        <h2 id="changes-h" className="section-title mb-3">
+          CHANGE REQUESTS
+        </h2>
+        <ChangesList pid={pid} />
+      </section>
     </div>
   );
 }

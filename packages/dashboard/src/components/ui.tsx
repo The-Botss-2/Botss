@@ -193,6 +193,8 @@ export function Modal({
   children,
   footer,
   labelledBy,
+  wide = false,
+  testId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -200,6 +202,8 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   labelledBy?: string;
+  wide?: boolean;
+  testId?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const autoId = useId();
@@ -214,6 +218,8 @@ export function Modal({
     <dialog
       ref={ref}
       className="modal"
+      style={wide ? { maxWidth: "min(52rem, calc(100vw - 2rem))" } : undefined}
+      data-testid={testId}
       aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();

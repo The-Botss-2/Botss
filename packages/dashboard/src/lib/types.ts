@@ -28,7 +28,7 @@ export const PHASE_LABELS: Record<Phase, string> = {
   done: "Done",
 };
 
-export const GATES = ["prd", "design_direction", "architecture", "plan", "release"] as const;
+export const GATES = ["prd", "design_direction", "design", "architecture", "plan", "release"] as const;
 export type Gate = (typeof GATES)[number];
 
 /** Mirrors PHASE_GATE in packages/core/src/phases.ts. */
@@ -36,6 +36,7 @@ export const PHASE_GATE: Partial<Record<Phase, Gate>> = {
   prd_review: "prd",
   design_direction: "design_direction",
   architecture_review: "architecture",
+  design: "design",
   plan_review: "plan",
   release_review: "release",
 };
@@ -46,6 +47,7 @@ export const DOC_GATE: Record<string, Gate> = {
   architecture: "architecture",
   plan: "plan",
   release: "release",
+  design: "design",
 };
 
 export const ROLES = [
@@ -123,6 +125,8 @@ export interface Settings {
   checks: string[];
   qa_per_task: boolean;
   security_audit: boolean;
+  /** The project is an existing codebase (set when it was opened). */
+  existing?: boolean;
   max_review_rounds: number;
   max_verify_failures: number;
   port_base: number;
@@ -169,6 +173,7 @@ export interface ProjectInfo {
   previewUrl: string | null;
   roles: Record<string, RoleDef>;
   defaultStack: Record<string, unknown>;
+  activeChange?: { id: string; status: ChangeStatus; text: string } | null;
 }
 
 export interface ProjectListItem {
@@ -459,6 +464,7 @@ export interface DesignInfo {
   directions: Question[];
   tokens: unknown;
   screens: string[];
+  directionPreviews?: string[];
 }
 
 export interface SkillsInfo {
@@ -471,4 +477,55 @@ export interface SkillFile {
   content: string;
   modified: boolean;
   hasDefault: boolean;
+}
+
+export type ChangeStatus = "pm" | "prd_review" | "replan" | "plan_review" | "applied" | "cancelled";
+
+export interface ChangeRequest {
+  id: string;
+  text: string;
+  status: ChangeStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FsHome {
+  home: string;
+  sep: "/" | "\\";
+  roots: string[];
+  launchDir: string | null;
+  launchIsProject: boolean;
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  isBotss: boolean;
+  isGit: boolean;
+  hasFiles: boolean;
+}
+
+export interface FsList {
+  path: string;
+  parent: string | null;
+  entries: FsEntry[];
+  /** The listed folder itself. */
+  isBotss?: boolean;
+  hasFiles?: boolean;
+}
+
+export interface TranscriptItem {
+  kind: "text" | "tool" | "result" | "init" | "final";
+  ts?: string;
+  text?: string;
+  tool?: string;
+  input?: Record<string, unknown> | null;
+  file?: string | null;
+  isError?: boolean;
+  toolUseId?: string | null;
+}
+
+export interface Transcript {
+  run: Run | null;
+  items: TranscriptItem[];
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useAction } from "../lib/queries";
 import { fmtAgo } from "../lib/format";
 import type { BatchOption, BatchQuestion, Question } from "../lib/types";
@@ -70,6 +70,7 @@ function BatchItem({
   note,
   onNote,
   rich,
+  optionExtra,
 }: {
   q: BatchQuestion;
   value: string;
@@ -77,6 +78,7 @@ function BatchItem({
   note: string;
   onNote: (v: string) => void;
   rich: boolean;
+  optionExtra?: (key: string) => ReactNode;
 }) {
   const [showNote, setShowNote] = useState(Boolean(note));
   const name = `q-${q.id}`;
@@ -116,6 +118,7 @@ function BatchItem({
                   {rec && <Badge tone="ok">recommended</Badge>}
                 </span>
                 {rich && <OptionExtras o={o} />}
+                {optionExtra?.(o.key)}
               </span>
             </label>
           );
@@ -160,7 +163,18 @@ function BatchItem({
 }
 
 /** One open question for the owner: a batch (radio options) or a single ask (free text). */
-export function QuestionCard({ pid, q, rich = false }: { pid: string; q: Question; rich?: boolean }) {
+export function QuestionCard({
+  pid,
+  q,
+  rich = false,
+  optionExtra,
+}: {
+  pid: string;
+  q: Question;
+  rich?: boolean;
+  /** Extra content under an option (e.g. a design direction preview), by option key. */
+  optionExtra?: (key: string) => ReactNode;
+}) {
   const qs = q.batch?.questions ?? [];
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -217,6 +231,7 @@ export function QuestionCard({ pid, q, rich = false }: { pid: string; q: Questio
                 key={x.id}
                 q={x}
                 rich={rich}
+                optionExtra={optionExtra}
                 value={answers[x.id] ?? ""}
                 onChange={(v) => setAnswers((a) => ({ ...a, [x.id]: v }))}
                 note={notes[x.id] ?? ""}
