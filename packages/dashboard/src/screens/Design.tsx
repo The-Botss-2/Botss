@@ -22,6 +22,20 @@ export function DesignScreen({ pid }: { pid: string }) {
       <Loadable q={q} rows={8}>
         {(d) => (
           <div className="flex flex-col gap-10">
+            {/* When screens exist, they come first: that is what the owner reviews before approving. */}
+            {d.screens.length > 0 && (
+              <section aria-labelledby="scr-h" data-testid="design-review">
+                <h2 id="scr-h" className="section-title mb-1">
+                  {inDesign && designDoc.data?.status === "submitted" ? "READY FOR YOUR REVIEW · SCREENS" : "SCREENS"}
+                </h2>
+                <p className="mb-3 text-[13px] text-ink-2">
+                  {inDesign && designDoc.data?.status === "submitted"
+                    ? "Click through every screen at desktop and mobile size. Approve the design above, or ask for changes."
+                    : "The designer's mockups, as the engineers will build them."}
+                </p>
+                <Screens pid={pid} screens={d.screens} />
+              </section>
+            )}
             <section aria-labelledby="dir-h">
               <h2 id="dir-h" className="section-title mb-3">
                 VISUAL DIRECTION
@@ -46,19 +60,17 @@ export function DesignScreen({ pid }: { pid: string }) {
                 </Empty>
               )}
             </section>
-            <section aria-labelledby="scr-h">
-              <h2 id="scr-h" className="section-title mb-3">
-                SCREEN MOCKUPS
-              </h2>
-              {d.screens.length ? (
-                <Screens pid={pid} screens={d.screens} />
-              ) : (
+            {d.screens.length === 0 && (
+              <section aria-labelledby="scr-h">
+                <h2 id="scr-h" className="section-title mb-3">
+                  SCREENS
+                </h2>
                 <Empty title="No screens yet">
                   The designer writes one spec and one HTML mockup per PRD screen after the design system is
-                  ready.
+                  ready. You will get a notification when they are ready to review.
                 </Empty>
-              )}
-            </section>
+              </section>
+            )}
           </div>
         )}
       </Loadable>
@@ -283,6 +295,7 @@ function Screens({ pid, screens }: { pid: string; screens: string[] }) {
   const html = screens.filter((s) => s.endsWith(".html"));
   const [sel, setSel] = useState(html[0] ?? screens[0]!);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
+  const [full, setFull] = useState(false);
   const content = useQuery({
     queryKey: ["p", pid, "docs", "screen", sel],
     queryFn: () => api<string>("GET", pp(pid, `/design/screen?name=${encodeURIComponent(sel)}`)),
@@ -317,7 +330,15 @@ function Screens({ pid, screens }: { pid: string; screens: string[] }) {
                   {d === "desktop" ? "Desktop 1280" : "Mobile 390"}
                 </button>
               ))}
+              <button className="btn btn-sm" onClick={() => setFull(true)} data-testid="design-fullscreen">
+                Full screen
+              </button>
             </div>
+          )}
+          {content.data !== undefined && (
+            <Modal open={full} title={sel} onClose={() => setFull(false)} wide testId="design-fullscreen-modal">
+              <ScaledFrame html={content.data} width={device === "desktop" ? 1280 : 390} title={`Mockup ${sel} (full screen)`} />
+            </Modal>
           )}
         </div>
         {content.error ? (

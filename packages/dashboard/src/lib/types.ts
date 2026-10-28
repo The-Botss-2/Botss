@@ -124,6 +124,8 @@ export interface Settings {
   team: Record<string, number>;
   checks: string[];
   qa_per_task: boolean;
+  preview_command?: string;
+  preview_url?: string;
   security_audit: boolean;
   /** The project is an existing codebase (set when it was opened). */
   existing?: boolean;

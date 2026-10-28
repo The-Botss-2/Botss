@@ -305,6 +305,25 @@ function SettingsForm({ pid, p }: { pid: string; p: ProjectInfo }) {
         )}
       </Row>
       <Row
+        label="Preview"
+        hint="How Botss runs your app on the Preview screen. Leave empty to let Botss work it out from the tech lead's notes or your project files (npm run dev, manage.py, docker compose, plain HTML)."
+      >
+        <input
+          className="field mono py-1 text-[12px]"
+          placeholder="command, for example: npm run dev"
+          aria-label="Preview command"
+          value={draft.preview_command ?? ""}
+          onChange={(e) => set("preview_command", e.target.value)}
+        />
+        <input
+          className="field mono mt-2 py-1 text-[12px]"
+          placeholder="address, for example: http://localhost:5173 (optional; read from the app's output)"
+          aria-label="Preview URL"
+          value={draft.preview_url ?? ""}
+          onChange={(e) => set("preview_url", e.target.value)}
+        />
+      </Row>
+      <Row
         label="Integration checks"
         hint={
           p.settings.workspace === "isolated"

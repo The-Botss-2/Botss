@@ -684,6 +684,15 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       return project(req).orch.preview(action as "start" | "stop" | "reset");
     }),
   );
+  app.get(
+    "/api/projects/:pid/preview",
+    wrap(async (req) => {
+      human(req);
+      const p = project(req);
+      const plan = await p.orch.previewPlan();
+      return { ...p.orch.previewer.get(), plan };
+    }),
+  );
 
   // ---------------------------------------------------------------------------------- design
   app.get(
@@ -692,8 +701,21 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       human(req);
       const p = project(req);
       const base = path.join(p.sharedDir(), ".botss/docs");
-      const screensDir = path.join(base, "design/screens");
-      const screens = fs.existsSync(screensDir) ? fs.readdirSync(screensDir).filter((f) => /\.(html|md)$/.test(f)).sort() : [];
+      // Mockups and specs anywhere under design/ (designers do not always use design/screens/), except the
+      // direction previews and the design system file. Paths are relative to design/.
+      const designDir = path.join(base, "design");
+      const screens: string[] = [];
+      const walk = (dir: string, rel: string) => {
+        if (!fs.existsSync(dir)) return;
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const r = rel ? `${rel}/${e.name}` : e.name;
+          if (e.isDirectory() && e.name !== "directions") walk(path.join(dir, e.name), r);
+          else if (e.isFile() && /\.(html|md)$/i.test(e.name) && !/^DESIGN\.md$/i.test(r)) screens.push(r);
+        }
+      };
+      walk(designDir, "");
+      // HTML mockups first, so the review opens on something to look at.
+      screens.sort((a, b) => Number(b.endsWith(".html")) - Number(a.endsWith(".html")) || a.localeCompare(b));
       const tokensFile = path.join(base, "contracts/design-tokens.json");
       let tokens: unknown;
       try {
@@ -714,10 +736,12 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       const p = project(req);
       const q = req.query as { name?: string; dir?: string };
       const name = q.name ?? "";
-      if (!/^[A-Za-z0-9._-]+\.(html|md)$/.test(name)) throw new ServiceError("bad screen name", 2);
-      const sub = q.dir === "directions" ? "directions" : "screens";
-      const f = safeJoin(path.join(p.sharedDir(), ".botss/docs/design", sub), name);
-      if (!f || !fs.existsSync(f)) throw new ServiceError("not found", 404);
+      if (!/^[A-Za-z0-9._\-/]+\.(html|md)$/.test(name) || name.split("/").includes("..")) throw new ServiceError("bad screen name", 2);
+      const design = path.join(p.sharedDir(), ".botss/docs/design");
+      // Paths are relative to design/; older clients send bare names from design/screens/.
+      const candidates = q.dir === "directions" ? [safeJoin(path.join(design, "directions"), name)] : [safeJoin(design, name), safeJoin(path.join(design, "screens"), name)];
+      const f = candidates.find((c) => c && fs.existsSync(c) && fs.statSync(c).isFile());
+      if (!f) throw new ServiceError("not found", 404);
       // Served as text and rendered by the dashboard in a sandboxed iframe (srcdoc, no allow-same-origin).
       return reply.header("content-type", "text/plain; charset=utf-8").header("content-security-policy", "sandbox").send(fs.readFileSync(f, "utf8"));
     }),

@@ -32,6 +32,7 @@ import {
 } from "./git.ts";
 import { cliCommand, quoteArg } from "./paths.ts";
 import { snapshotDir, snapshotDiff, takeSnapshot } from "./snapshot.ts";
+import { guessPreview, PreviewManager, previewFromNotes, type PreviewPlan, type PreviewStatus } from "./preview.ts";
 import { agentRuntimeEnv, allocatePortBlock } from "./ports.ts";
 import type { Project } from "./project.ts";
 import { buildRunPrompt, buildSystemPrompt, roleTitle } from "./prompts.ts";
@@ -92,6 +93,7 @@ export class Orchestrator {
     this.timer = null;
     this.stopped = true;
     await this.p.runner.killAll();
+    await this.previewer.stop();
     await this.idle();
     while (this.ticking) await new Promise((r) => setTimeout(r, 20));
   }
@@ -987,14 +989,24 @@ export class Orchestrator {
       if (!this.gateEnabled("plan")) await this.approve("plan", "auto-approved (gate off)", "auto");
     } else if (name === "prd" && ["discovery", "prd_review", "idea"].includes(phase)) {
       this.svc.setPhase("prd_review");
-      if (!this.gateEnabled("prd")) await this.approve("prd", "auto-approved (gate off)", "auto");
+      await this.openGate("prd");
     } else if (name === "design" && phase === "design") {
-      if (!this.gateEnabled("design")) await this.approve("design", "auto-approved (gate off)", "auto");
+      await this.openGate("design");
     } else if (name === "architecture" && phase === "architecture_review") {
-      if (!this.gateEnabled("architecture")) await this.approve("architecture", "auto-approved (gate off)", "auto");
+      await this.openGate("architecture");
     } else if (name === "plan" && phase === "plan_review") {
-      if (!this.gateEnabled("plan")) await this.approve("plan", "auto-approved (gate off)", "auto");
+      await this.openGate("plan");
     }
+  }
+
+  /** A document is waiting at its gate: approve it automatically when the gate is off, otherwise tell the owner. */
+  private async openGate(gate: Gate): Promise<void> {
+    if (!this.gateEnabled(gate)) {
+      await this.approve(gate, "auto-approved (gate off)", "auto");
+      return;
+    }
+    const what: Record<string, string> = { prd: "the PRD", design: "the screen designs", architecture: "the architecture", plan: "the plan", release: "the release" };
+    this.svc.emit("gate.waiting", `Review ${what[gate] ?? gate}`, { gate, doc: gate }, { actor: "orchestrator" });
   }
 
   /** The gate is open through the phase flow, or through an active change request. */
@@ -1066,7 +1078,12 @@ export class Orchestrator {
         break;
       case "release":
         this.svc.setPhase("done");
-        this.svc.emit("project.done", "Release approved. Merge botss/integration into your main branch when you are ready.", {}, { actor });
+        this.svc.emit(
+          "project.done",
+          this.p.direct ? "Release approved. Everything is in your project folder." : "Release approved. Merge botss/integration into your main branch when you are ready.",
+          {},
+          { actor },
+        );
         break;
       case "design_direction":
         break;
@@ -1576,6 +1593,8 @@ export class Orchestrator {
           // (the summary may already have auto-approved the release when its gate is off)
           if ((this.svc.phase as string) === "release_review") await this.approve("release", "quick track", "auto");
         } else await this.enterRelease();
+        // The build is finished: run the app so the owner can try it (in the background).
+        if (this.p.direct) void this.autoPreview();
       }
     } else if (this.svc.phase === "release_review") {
       const rel = this.svc.tasks({ kind: ["release"] });
@@ -1659,7 +1678,8 @@ export class Orchestrator {
       `## Usage\n\nBudget tokens used in the last 30 days: ${usage.byDay.reduce((a, d) => a + (d.tokens ?? 0), 0).toLocaleString()}.`,
     ].join("\n");
     this.svc.submitDoc("release", ".botss/docs/release.md", md, "orchestrator", null);
-    if (!this.gateEnabled("release")) await this.approve("release", "auto-approved (gate off)", "auto");
+    // The quick track approves its own release right after this; nothing to ask the owner.
+    if (this.svc.state.track !== "quick") await this.openGate("release");
   }
 
   /** QA or review verdicts on release tasks. */
@@ -1740,35 +1760,60 @@ export class Orchestrator {
 
   // ------------------------------------------------------------------------------------- preview
 
-  async preview(
-    action: "start" | "stop" | "reset",
-  ): Promise<{ ok: boolean; output: string; url: string | null }> {
+  readonly previewer = new PreviewManager(() => this.svc.emit("preview.status", "Preview updated", {}, { actor: "botss" }));
+
+  /** How to run the app: the owner's setting, then the tech lead's notes, then the project's own files. */
+  async previewPlan(): Promise<PreviewPlan | null> {
+    const s = this.svc.settings;
+    if (s.preview_command || s.preview_url) return { command: s.preview_command || null, url: s.preview_url || null, source: "your setting" };
+    const notes = [this.svc.doc("codebase")?.content, ...["T000", "T001"].map((id) => this.svc.handoffs(id).at(-1)?.content), this.svc.doc("triage")?.content];
+    for (const n of notes) {
+      const found = n ? previewFromNotes(n) : null;
+      if (found) return { ...found, source: "the tech lead's notes" };
+    }
+    const block = (this.svc.agent(await this.integrationAgent())!.port_block as number) + 2;
+    return guessPreview(this.p.sharedDir(), block);
+  }
+
+  async preview(action: "start" | "stop" | "reset"): Promise<PreviewStatus> {
+    if (action === "stop") {
+      await this.previewer.stop();
+      this.svc.emit("preview.changed", "Preview stopped", { action }, { actor: "human" });
+      return this.previewer.get();
+    }
     const agent = await this.integrationAgent();
     const env = this.envFor(agent, {});
-    const cmd =
-      action === "start"
-        ? "docker compose up -d --build"
-        : action === "stop"
-          ? "docker compose down"
-          : "docker compose down -v && docker compose up -d --build";
-    const r = await runShell(cmd, { cwd: this.p.sharedDir(), env, timeoutMs: 15 * 60_000 });
-    this.svc.patchState({ previewRunning: action !== "stop" && r.code === 0 });
+    const plan = await this.previewPlan();
+    const status = await this.previewer.start(
+      this.p.sharedDir(),
+      plan ?? { command: null, url: null, source: "nothing found" },
+      env,
+      Number(env.FRONTEND_PORT),
+    );
     this.svc.emit(
       "preview.changed",
-      `Preview ${action}: ${r.code === 0 ? "ok" : "failed"}`,
-      { action, code: r.code },
+      status.error ? `Preview could not start: ${status.error}` : `Preview ${status.url ? `running at ${status.url}` : "starting"}`,
+      { action, url: status.url, error: status.error },
       { actor: "human" },
     );
-    return {
-      ok: r.code === 0,
-      output: r.output.slice(-6000),
-      url: r.code === 0 && action !== "stop" ? `http://127.0.0.1:${env.FRONTEND_PORT}` : null,
-    };
+    return status;
+  }
+
+  /** When a build finishes, start the app so the owner can try it right away. */
+  private async autoPreview(): Promise<void> {
+    try {
+      const status = await this.preview("start");
+      if (!status.error) {
+        this.svc.emit("preview.ready", `Your app is running${status.url ? ` at ${status.url}` : ""}. Try it on the Preview screen.`, { url: status.url }, { actor: "botss" });
+      }
+    } catch (e) {
+      this.svc.alert(`Could not start the preview: ${(e as Error).message}`);
+    }
   }
 
   previewUrl(): string | null {
-    const a = this.svc.agent("integration");
-    return a && this.svc.state.previewRunning ? `http://127.0.0.1:${(a.port_block as number) + 2}` : null;
+    const st = this.previewer.get();
+    return st.running ? st.url : null;
   }
 }
 

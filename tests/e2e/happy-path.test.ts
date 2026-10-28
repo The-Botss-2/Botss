@@ -116,7 +116,7 @@ describe("1. happy path through every phase (fake claude)", () => {
     await new Promise((r) => setTimeout(r, 500));
     expect(svc.phase).toBe("design");
     const design = await h.api("GET", "/design");
-    expect(design.screens).toEqual(["home.html"]);
+    expect(design.screens).toEqual(["screens/home.html"]);
     expect(design.tokens.color.bg).toBe("#fafaf7");
     await h.api("POST", "/gates/design/approve", {});
     expect(svc.phase).toBe("architecture_review");

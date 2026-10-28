@@ -508,7 +508,7 @@ test("screenshot tour", async ({ page }) => {
     "designer",
   );
   await expect(page.getByTestId("gate-bar")).toContainText("Review the screens");
-  await page.getByText("SCREEN MOCKUPS").scrollIntoViewIfNeeded();
+  await page.getByTestId("design-review").scrollIntoViewIfNeeded();
   await shot(page, "design-review");
   svc.setPhase("build");
 

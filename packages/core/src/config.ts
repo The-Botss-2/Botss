@@ -95,6 +95,9 @@ export const settingsSchema = z.object({
   /** Check commands run on the integration branch after each merge (from T000/T001 handoffs). */
   checks: z.array(z.string()).default([]),
   qa_per_task: z.boolean().default(true),
+  /** How to run the app for the Preview screen (empty: from the tech lead's notes or the project files). */
+  preview_command: z.string().default(""),
+  preview_url: z.string().default(""),
   /** The project folder already had code at `botss init`: survey it first, no scaffold. */
   existing: z.boolean().default(false),
   security_audit: z.boolean().default(false),

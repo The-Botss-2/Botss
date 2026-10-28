@@ -78,7 +78,7 @@ export interface Notification {
   level: "action" | "warning" | "success" | "info";
   title: string;
   body?: string;
-  screen: "questions" | "docs" | "board" | "design" | "team" | "agents" | "usage" | "feed";
+  screen: "questions" | "docs" | "board" | "design" | "team" | "agents" | "usage" | "feed" | "preview";
   doc?: string;
   task?: string | null;
 }
@@ -98,15 +98,19 @@ export function notificationFor(type: string, summary: string, data: Record<stri
     case "ask.batch":
       if (data.to !== "@human") return null;
       return { level: "action", title: type === "ask.batch" ? `${meta.actor} needs your decisions` : `${meta.actor} asks you`, body: String(data.body ?? "").slice(0, 200), screen: "questions", task };
-    case "doc.submitted":
-      if (data.status !== "submitted" || !GATE_DOCS[data.doc]) return null;
+    // Only when a document is really waiting for the owner (not when a gate is off or the quick track
+    // approves it), so "Review ..." always means "you need to look at this".
+    case "gate.waiting":
+      if (!GATE_DOCS[data.doc]) return null;
       return {
         level: "action",
         title: `Review ${GATE_DOCS[data.doc]}`,
-        body: `${meta.actor} submitted ${data.doc} v${data.version}. Approve it or ask for changes.`,
+        body: data.doc === "design" ? "The screens are ready. Look at them, then approve or ask for changes." : "Approve it or ask for changes.",
         screen: data.doc === "design" ? "design" : data.doc === "plan" ? "team" : "docs",
         doc: data.doc,
       };
+    case "preview.ready":
+      return { level: "success", title: "Your app is running", body: summary, screen: "preview" };
     case "task.status":
       // A task blocked on a question to the owner is announced by the question itself.
       if (data.to === "blocked" && !String(data.reason ?? "").startsWith("asked @human"))

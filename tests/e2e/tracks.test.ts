@@ -39,6 +39,7 @@ describe("process tracks (fake claude, direct mode)", () => {
       { workspace: "direct" },
     );
     const svc = h.project.svc;
+    fs.writeFileSync(path.join(h.root, "index.html"), "<!doctype html><h1>Sample site</h1>");
     await h.api("POST", "/idea", { text: "Make the header blue" });
     expect(svc.tasks({ kind: ["planning"] })[0]).toMatchObject({ role: "tech-lead", mode: "triage" });
     await waitFor(() => svc.phase === "done", "quick request done", 90_000);
@@ -52,6 +53,19 @@ describe("process tracks (fake claude, direct mode)", () => {
     const titles = (await h.api("GET", "/notifications")).map((n: any) => n.data.notify.title);
     expect(titles).toEqual(expect.arrayContaining(["T001 is done", "All done"]));
     expect(titles.some((t: string) => /Process: quick/.test(t))).toBe(true);
+    // Nothing was waiting for the owner, so no "Review ..." notifications.
+    expect(titles.filter((t: string) => t.startsWith("Review"))).toEqual([]);
+
+    // The finished build is running: a plain HTML project gets a static server.
+    const preview = await waitFor(async () => {
+      const s = await h!.api("GET", "/preview");
+      return s.running && s.url ? s : null;
+    }, "preview running", 20_000);
+    expect(preview.source).toMatch(/static files/);
+    expect(await (await fetch(preview.url)).text()).toContain("Sample site");
+    await waitFor(async () => (await h!.api("GET", "/notifications")).some((n: any) => n.data.notify.title === "Your app is running"), "preview notification");
+    await h.api("POST", "/preview/stop", {});
+    expect((await h.api("GET", "/preview")).running).toBe(false);
 
     // The next request: straight from "done", same quick flow.
     await h.api("POST", "/idea", { text: "Rename the button" });
@@ -79,6 +93,8 @@ describe("process tracks (fake claude, direct mode)", () => {
     await waitFor(() => svc.phase === "prd_review", "short PRD submitted", 60_000);
     expect(svc.state.track).toBe("standard");
     expect(svc.questions()).toHaveLength(0); // no discovery questions
+    const titles = (await h.api("GET", "/notifications")).map((n: any) => n.data.notify.title);
+    expect(titles).toContain("Review the PRD");
     await h.api("POST", "/gates/prd/approve", {});
     expect(svc.phase).toBe("plan_review");
     expect(svc.tasks({ kind: ["planning"] }).map((t) => t.mode)).toEqual(["triage", "draft", "plan"]);
