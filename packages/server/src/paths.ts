@@ -11,6 +11,29 @@ export const DASHBOARD_DIST = path.join(BOTSS_REPO, "packages/dashboard/dist");
 export const SKILLS_SOURCE = path.join(BOTSS_REPO, "skills");
 export const ROLES_SOURCE = path.join(BOTSS_REPO, "roles.yaml");
 
+/**
+ * Identifies the Botss code on disk: the newest modification time of the server, core, and CLI sources. A running
+ * server compares it with the CLI's to notice it is older than the code (after `git pull`) and should restart.
+ */
+export function buildId(): string {
+  let newest = 0;
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".ts")) newest = Math.max(newest, fs.statSync(p).mtimeMs);
+    }
+  };
+  for (const pkg of ["core", "server", "cli"]) walk(path.join(BOTSS_REPO, "packages", pkg, "src"));
+  return String(Math.floor(newest));
+}
+
 /** Per-user Botss state (registry of projects, server info). Never inside ~/.claude. */
 export function botssHome(): string {
   const h = process.env.BOTSS_HOME ?? path.join(os.homedir(), ".botss");

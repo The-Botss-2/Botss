@@ -105,7 +105,7 @@ async function init(p: Parsed): Promise<number> {
   const r = await initProject(target);
   console.log(`${r.alreadyInitialized ? "Botss project already initialized" : "Initialized Botss project"}: ${r.root}`);
   for (const c of r.created) console.log(`  + ${c}`);
-  console.log(`  integration worktree: ${r.integration}`);
+  if (r.integration !== r.root) console.log(`  integration worktree: ${r.integration}`);
   if (r.existing) console.log("  existing code found: the tech lead will survey it first, and the team changes only what you ask.");
   for (const w of r.warnings) console.log(`  ! ${w}`);
   const checks = await doctorChecks();
@@ -151,6 +151,36 @@ async function alive(url: string): Promise<boolean> {
   }
 }
 
+/**
+ * After an update the server that is already running still has the old code. Restart it when no agent is working;
+ * otherwise say so. Returns true when the running server can be used as is.
+ */
+async function restartIfOutdated(info: { url: string; token: string }): Promise<boolean> {
+  const { buildId } = await import("@botss/server");
+  let build: string | undefined;
+  try {
+    build = ((await (await fetch(`${info.url}/api/health`, { signal: AbortSignal.timeout(1500) })).json()) as { build?: string }).build;
+  } catch {
+    return true;
+  }
+  if (build === buildId()) return true;
+  console.log("Botss was updated, but the server that is running still has the old code. Restarting it...");
+  const res = await fetch(`${info.url}/api/shutdown`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ ifIdle: true }),
+  }).catch(() => null);
+  if (!res || !res.ok) {
+    const why = res?.status === 409 ? "agents are working right now" : "it is too old to restart itself";
+    throw new CliError(
+      `The running Botss server is out of date and could not be restarted (${why}). Stop it with Ctrl+C in the terminal where you ran \`botss up\` (or \`botss stop\` first if agents are working), then run \`botss up\` again.`,
+      1,
+    );
+  }
+  for (let i = 0; i < 50 && (await alive(info.url)); i++) await new Promise((r) => setTimeout(r, 200));
+  return false;
+}
+
 /** Dashboard route for the folder `botss up` runs in: the project itself, or the folder picker opened there. */
 async function routeFor(dir: string, root: string | null): Promise<string> {
   return root ? `#/p/${await projectIdFor(root)}` : `#/open?path=${encodeURIComponent(dir)}`;
@@ -159,7 +189,8 @@ async function routeFor(dir: string, root: string | null): Promise<string> {
 async function up(p: Parsed): Promise<number> {
   const cwd = path.resolve(p.positional[1] ?? ".");
   const root = findProjectRoot(cwd);
-  const existing = readServerInfo();
+  let existing = readServerInfo();
+  if (existing && (await alive(existing.url)) && !(await restartIfOutdated(existing))) existing = null;
   if (existing && (await alive(existing.url))) {
     const conn = { url: existing.url, token: existing.token, project: null, agent: false };
     if (root) await request(conn, "POST", "/api/projects", { root }).catch(() => {});
@@ -172,6 +203,10 @@ async function up(p: Parsed): Promise<number> {
   const { BotssServer } = await import("@botss/server");
   const want = Number(flag(p, "port") ?? process.env.BOTSS_PORT ?? 4800);
   const server = new BotssServer({ port: want, openRegistered: true, launchDir: root ?? cwd });
+  server.onShutdown = () => {
+    console.log("\nBotss was restarted by a newer `botss up` in another terminal. This one is done.");
+    process.exit(0);
+  };
   try {
     await server.start();
   } catch (e) {

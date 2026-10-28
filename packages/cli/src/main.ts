@@ -7,7 +7,7 @@ const HELP = `botss — your local AI software team (runs on your own Claude Cod
 
 Owner commands:
   botss setup [--uninstall]  install the botss command so it works from any folder
-  botss init [path]          make a folder a Botss project (git, .botss/, skills, integration branch)
+  botss init [path]          make a folder a Botss project (adds one hidden .botss folder)
   botss doctor [--login]     check prerequisites (node, pnpm, git, docker, uv, claude)
   botss up [--port N] [--no-open]   start the local server + dashboard (127.0.0.1 only)
   botss status               phase, tasks, agents, quota for the current project

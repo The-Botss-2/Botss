@@ -6,7 +6,7 @@ import path from "node:path";
 import { registerApi } from "./api.ts";
 import { EventBus, topicsFor, type BotssEvent } from "./bus.ts";
 import { initProject } from "./init.ts";
-import { DASHBOARD_DIST } from "./paths.ts";
+import { buildId, DASHBOARD_DIST } from "./paths.ts";
 import { Project, projectId } from "./project.ts";
 import { clearServerInfo, readRegistry, writeServerInfo } from "./registry.ts";
 import type { AgentRunner } from "./runner.ts";
@@ -34,12 +34,21 @@ export class BotssServer {
   port = 0;
   /** The folder `botss up` was started from (or last opened from the CLI); the dashboard offers to open it. */
   launchDir: string | null = null;
+  /** The code version this server runs (see buildId). */
+  readonly build = buildId();
+  /** Called after a shutdown request has stopped the server (the CLI exits the process). */
+  onShutdown: (() => void) | null = null;
 
   private readonly opts: ServerOptions;
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
     this.launchDir = opts.launchDir ?? null;
     this.tokens = new TokenStore(opts.token);
+  }
+
+  async requestShutdown(): Promise<void> {
+    await this.stop();
+    this.onShutdown?.();
   }
 
   get url(): string {

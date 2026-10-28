@@ -3,7 +3,7 @@ export { Project, projectId } from "./project.ts";
 export { initProject } from "./init.ts";
 export { readRegistry, readServerInfo, serverInfoFile, addToRegistry } from "./registry.ts";
 export { ClaudeRunner, claudeArgs, killTree, resolveBin, type AgentRunner, type RunSpec } from "./runner.ts";
-export { botssHome, BOTSS_REPO, CLI_ENTRY, cliCommand, ProjectPaths } from "./paths.ts";
+export { botssHome, BOTSS_REPO, buildId, CLI_ENTRY, cliCommand, ProjectPaths } from "./paths.ts";
 export { runShell, findShell } from "./shell.ts";
 export { safeJoin } from "./safe-path.ts";
 export { portFree } from "./ports.ts";

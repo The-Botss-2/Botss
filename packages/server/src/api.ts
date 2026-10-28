@@ -68,7 +68,21 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
       }
     };
 
-  app.get("/api/health", async () => ({ ok: true, name: "botss", version: "0.1.0" }));
+  app.get("/api/health", async () => ({ ok: true, name: "botss", version: "0.1.0", build: srv.build, pid: process.pid }));
+
+  // `botss up` restarts a server that is older than the code on disk (after an update), but never under
+  // working agents unless asked.
+  app.post(
+    "/api/shutdown",
+    wrap((req, reply) => {
+      human(req);
+      const ifIdle = Boolean((req.body as { ifIdle?: boolean } | undefined)?.ifIdle);
+      const working = [...srv.projects.values()].reduce((n, p) => n + p.orch.activeRuns().length, 0);
+      if (ifIdle && working > 0) return reply.code(409).send({ error: `${working} agent run(s) are working`, working });
+      setTimeout(() => void srv.requestShutdown(), 50);
+      return { ok: true };
+    }),
+  );
 
   // ------------------------------------------------------------------------------------ projects
   app.get(
