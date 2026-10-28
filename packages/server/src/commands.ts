@@ -37,6 +37,7 @@ const STANDARD_DOCS: Record<string, string> = {
   plan: ".botss/docs/plan-summary.md",
   idea: ".botss/docs/idea.md",
   codebase: ".botss/docs/codebase.md",
+  triage: ".botss/docs/triage.md",
   release: ".botss/docs/release.md",
 };
 
@@ -245,6 +246,12 @@ export class Commands {
     }
     if (status === "DONE_WITH_CONCERNS") this.svc.emit("task.concerns", `${t.id} done with concerns`, {}, { actor, task: t.id });
 
+    if (t.kind === "build" && t.meta.fast) {
+      // Quick track: verified is enough; no review or QA round.
+      this.svc.setStatus(t.id, "review", { actor, force: true, reason: `${status} (quick track)` });
+      void this.p.orch.queueMerge(t.id);
+      return { text: `${t.id} verified. Quick track: it is done.` };
+    }
     if (t.kind === "build" && !t.meta.ruling) {
       this.svc.setStatus(t.id, "review", { actor, reason: status });
       return { text: `${t.id} verified and moved to review.` };

@@ -27,7 +27,7 @@ roles:
     title: Tech Lead / Architect
     phase: [planning, build, merge]
     skills: [team-protocol, tech-lead, engineering-discipline]
-    writes: [".botss/docs/architecture.md", ".botss/docs/codebase.md", ".botss/docs/contracts/**", ".botss/docs/decisions/**", ".botss/docs/plan-summary.md", ".botss/tasks/**"]
+    writes: [".botss/docs/architecture.md", ".botss/docs/codebase.md", ".botss/docs/triage.md", ".botss/docs/contracts/**", ".botss/docs/decisions/**", ".botss/docs/plan-summary.md", ".botss/tasks/**"]
     # T000 (app scaffold) and integration tasks list their code paths in `owns`.
     max_parallel: 1
 

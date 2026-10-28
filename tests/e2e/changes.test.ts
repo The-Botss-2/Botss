@@ -90,7 +90,7 @@ describe("changes and existing projects (fake claude)", () => {
       },
       { settings: { existing: true } },
     );
-    await h.api("POST", "/idea", { text: "Add a dark mode toggle", kind: "feature" });
+    await h.api("POST", "/idea", { text: "Add a dark mode toggle", kind: "feature", track: "full" });
     const svc = h.project.svc;
     expect(svc.tasks({ kind: ["planning"] })[0]).toMatchObject({ role: "tech-lead", mode: "survey" });
     await waitFor(() => svc.tasks({ kind: ["planning"] }).some((t) => t.mode === "discover"), "discovery after survey");

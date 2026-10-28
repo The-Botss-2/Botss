@@ -348,9 +348,18 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
           links: z.array(z.string().max(2000)).max(50).optional(),
           attachments: z.array(z.object({ name: z.string().max(200), data: z.string().max(14_000_000) })).max(20).optional(),
           kind: z.enum(["new", "feature", "fix"]).optional(),
+          track: z.enum(["auto", "quick", "standard", "full"]).optional(),
         })
         .parse(req.body);
       await p.orch.submitIdea(b);
+      return { ok: true };
+    }),
+  );
+  app.post(
+    "/api/projects/:pid/cancel",
+    wrap(async (req) => {
+      human(req);
+      await project(req).orch.cancelCurrentWork();
       return { ok: true };
     }),
   );

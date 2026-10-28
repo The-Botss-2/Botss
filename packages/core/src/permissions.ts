@@ -33,6 +33,7 @@ const DOC_OWNERS: [string, Role[]][] = [
   ["discovery/", ["pm"]],
   ["architecture", ["tech-lead"]],
   ["codebase", ["tech-lead"]],
+  ["triage", ["tech-lead"]],
   ["plan", ["tech-lead"]],
   ["contracts/design-tokens.json", ["designer", "tech-lead"]],
   ["contracts/", ["tech-lead"]],

@@ -65,6 +65,14 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
 }
 
 export const MODE_GUIDE: Record<string, string> = {
+  triage:
+    "Mode: triage. Before any process starts, decide how much process this request needs, like a lead sizing a ticket. Keep this run short: read `.botss/docs/idea.md` and only the few files needed to understand where the change goes (do not survey the whole project). Pick one track:\n" +
+    "- **quick**: small and clear, 1 to 3 small tasks, no new data model, API, or screens to design. Examples: UI or style tweaks, copy changes, a small bug fix, a config change.\n" +
+    "- **standard**: a real feature that needs a short spec, but no visual direction or architecture change.\n" +
+    "- **full**: a new product, or a large feature with new data, screens, or architecture.\n" +
+    "When unsure between two tracks, pick the smaller one; the owner can ask for more.\n" +
+    "For **quick**: write the task files in `.botss/tasks/` now (short: goal, `owns` with the exact files, acceptance criteria, a `verify` command that really checks the change; continue numbering after the highest existing task ID; leave existing task files unchanged), then `botss plan submit .botss/tasks/`.\n" +
+    "For every track: write `.botss/docs/triage.md` whose first line is `track: quick`, `track: standard`, or `track: full`, followed by two to four plain sentences for the owner: what you understood and what will happen next. Then `botss doc submit triage` and finish.",
   survey:
     "Mode: survey. This project is an existing codebase. Read it narrowly: README, package manifests and lockfiles, the top-level layout, CI config, a few representative source and test files. Do not change code. Write `.botss/docs/codebase.md`: what the app does, stack and versions, folder layout, how to run it, conventions new code must follow (naming, errors, data access, UI components), risky areas, and a `## Checks` section with the exact test, lint, type check, and build commands (one per line, runnable without make). Commit, then `botss doc submit codebase` and finish.",
   discover:

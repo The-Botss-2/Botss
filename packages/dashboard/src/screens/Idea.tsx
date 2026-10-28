@@ -32,11 +32,17 @@ export function IdeaScreen({ pid }: { pid: string }) {
   return (
     <Loadable q={project}>
       {(p) =>
-        p.phase === "idea" ? (
-          <IdeaForm pid={pid} existing={Boolean(p.settings.existing)} />
+        p.phase === "idea" || p.phase === "done" ? (
+          <IdeaForm pid={pid} existing={Boolean(p.settings.existing) || p.phase === "done"} next={p.phase === "done"} />
         ) : (
           <div className="max-w-3xl">
-            <PageHeader title="The idea" kicker="submitted · read only" />
+            <PageHeader title="The current request" kicker="submitted · read only" />
+            <div className="mb-4 flex flex-wrap items-center gap-3" data-testid="request-status">
+              <span className="mono border border-rule bg-surface px-2 py-1 text-[12px]" data-testid="track">
+                process: {p.state.track ? TRACK_LABEL[p.state.track] : "being sized by the tech lead"}
+              </span>
+              <CancelWork pid={pid} />
+            </div>
             {p.state.idea ? (
               <div className="border border-rule bg-surface p-5" data-testid="idea-readonly">
                 {p.state.idea.stakes && (
@@ -91,8 +97,50 @@ export function IdeaScreen({ pid }: { pid: string }) {
   );
 }
 
-function IdeaForm({ pid, existing }: { pid: string; existing: boolean }) {
+const TRACK_LABEL: Record<string, string> = {
+  quick: "quick: built right away",
+  standard: "standard: short PRD, then a plan",
+  full: "full: discovery, design, and architecture",
+};
+
+const TRACKS = [
+  { v: "auto", label: "Auto", hint: "The tech lead sizes it first. Recommended." },
+  { v: "quick", label: "Quick", hint: "Small change: build it now, no PRD or design." },
+  { v: "standard", label: "Standard", hint: "A feature: short PRD and a plan to approve." },
+  { v: "full", label: "Full", hint: "New product: questions, PRD, design, architecture." },
+] as const;
+
+/** Stop the current request (agents, open questions, unfinished tasks); finished work stays. */
+function CancelWork({ pid }: { pid: string }) {
+  const [confirm, setConfirm] = useState(false);
+  const cancel = useAction<Record<string, never>>(pid, "POST", "/cancel", ["project", "tasks", "questions", "agents", "docs"]);
+  if (!confirm)
+    return (
+      <button type="button" className="btn" onClick={() => setConfirm(true)} data-testid="cancel-work">
+        Cancel current work
+      </button>
+    );
+  return (
+    <span className="flex items-center gap-2 text-[13px]">
+      Stop the agents and drop unfinished tasks? Finished work stays in your folder.
+      <button
+        type="button"
+        className="btn btn-danger"
+        data-testid="cancel-work-confirm"
+        onClick={() => cancel.mutate({}, { onSuccess: () => (toast("Cancelled. Send a new request when you are ready."), setConfirm(false)) })}
+      >
+        Yes, cancel
+      </button>
+      <button type="button" className="btn" onClick={() => setConfirm(false)}>
+        Keep working
+      </button>
+    </span>
+  );
+}
+
+function IdeaForm({ pid, existing, next = false }: { pid: string; existing: boolean; next?: boolean }) {
   const [text, setText] = useState("");
+  const [track, setTrack] = useState<(typeof TRACKS)[number]["v"]>("auto");
   const [kind, setKind] = useState<"new" | "feature" | "fix">(existing ? "feature" : "new");
   const [stakes, setStakes] = useState("internal tool");
   const [links, setLinks] = useState<string[]>([]);
@@ -103,6 +151,7 @@ function IdeaForm({ pid, existing }: { pid: string; existing: boolean }) {
     text: string;
     stakes: string;
     kind: string;
+    track: string;
     links: string[];
     attachments: { name: string; data: string }[];
   }>(pid, "POST", "/idea", ["project", "docs", "tasks"]);
@@ -131,29 +180,33 @@ function IdeaForm({ pid, existing }: { pid: string; existing: boolean }) {
   return (
     <div className="max-w-3xl">
       <PageHeader
-        title={existing ? "What should the team change?" : "What should the team build?"}
-        kicker={existing ? "phase 0 · existing codebase" : "phase 0 · idea"}
+        title={next ? "What's next?" : existing ? "What should the team change?" : "What should the team build?"}
+        kicker={next ? "new request" : existing ? "phase 0 · existing codebase" : "phase 0 · idea"}
       />
-      {existing && (
-        <div
-          className="mb-5 border border-l-4 border-rule border-l-[var(--accent)] bg-surface px-4 py-3 text-[13px] text-ink-2"
-          data-testid="existing-note"
-        >
-          The tech lead will first read your codebase and summarize it (Documents → codebase).
-        </div>
-      )}
+      <div
+        className="mb-5 border border-l-4 border-rule border-l-[var(--accent)] bg-surface px-4 py-3 text-[13px] text-ink-2"
+        data-testid="existing-note"
+      >
+        {next
+          ? "The last request is done. Ask for the next change; small changes are built right away."
+          : existing
+            ? "The tech lead sizes your request first: small changes are built right away, bigger ones get a short spec and a plan for you to approve."
+            : "The tech lead sizes your request first, then the team follows just enough process for it."}
+      </div>
       <form
         className="flex flex-col gap-5"
         onSubmit={(e) => {
           e.preventDefault();
           submit.mutate(
-            { text, stakes, kind, links, attachments: atts.map(({ name, data }) => ({ name, data })) },
+            { text, stakes, kind, track, links, attachments: atts.map(({ name, data }) => ({ name, data })) },
             {
               onSuccess: () =>
                 toast(
-                  existing
-                    ? "Request submitted. The team is reading your codebase."
-                    : "Idea submitted. The product manager is reading it.",
+                  track === "full"
+                    ? "Submitted. The team starts the full process."
+                    : track === "auto"
+                      ? "Submitted. The tech lead is sizing it."
+                      : `Submitted on the ${track} track.`,
                 ),
             },
           );
@@ -214,10 +267,27 @@ function IdeaForm({ pid, existing }: { pid: string; existing: boolean }) {
           />
           <div className="hint mt-1">
             {existing
-              ? "What should change, for whom, and how you will know it works. The PM asks follow-up questions next."
-              : "Who uses it, what they do, what must never go wrong. The PM asks follow-up questions next."}
+              ? "What should change and how you will know it works. The team builds only what you ask for."
+              : "Who uses it, what they do, what must never go wrong. The team builds only what you ask for."}
           </div>
         </div>
+
+        <fieldset>
+          <legend className="label">Process</legend>
+          <div className="grid grid-cols-4 gap-2 max-[1100px]:grid-cols-2">
+            {TRACKS.map((t) => (
+              <label
+                key={t.v}
+                className={`cursor-pointer border p-3 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--focus)] ${track === t.v ? "border-ink bg-surface" : "border-rule hover:border-rule-strong"}`}
+                data-testid={`track-${t.v}`}
+              >
+                <input type="radio" name="track" className="sr-only" value={t.v} checked={track === t.v} onChange={() => setTrack(t.v)} />
+                <div className="text-[13px] font-semibold">{t.label}</div>
+                <div className="mt-0.5 text-[12px] text-ink-3">{t.hint}</div>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <fieldset>
           <legend className="label">Stakes</legend>

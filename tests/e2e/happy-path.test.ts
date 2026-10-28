@@ -95,7 +95,7 @@ describe("1. happy path through every phase (fake claude)", () => {
     const svc = h.project.svc;
     const phase = (p: string) => () => svc.phase === p;
 
-    await h.api("POST", "/idea", { text: "A todo app for me and my family", stakes: "hobby", links: [] });
+    await h.api("POST", "/idea", { text: "A todo app for me and my family", stakes: "hobby", links: [], track: "full" });
     expect(svc.phase).toBe("discovery");
 
     const q1 = await waitFor(() => svc.questions("open").find((q) => q.kind === "batch"), "discovery batch");

@@ -38,6 +38,8 @@ export interface ProjectState {
   previewRunning?: boolean;
   alerts?: { id: number; ts: string; text: string; task?: string | null }[];
   changes?: ChangeRequest[];
+  /** How much process the current request gets (decided by triage or chosen by the owner). */
+  track?: "quick" | "standard" | "full" | null;
 }
 
 /** An owner change request mid-project: PM updates the PRD, owner approves, tech lead replans, owner approves. */
@@ -109,7 +111,8 @@ export function notificationFor(type: string, summary: string, data: Record<stri
       // A task blocked on a question to the owner is announced by the question itself.
       if (data.to === "blocked" && !String(data.reason ?? "").startsWith("asked @human"))
         return { level: "warning", title: `${task} is blocked`, body: String(data.reason ?? ""), screen: "board", task };
-      if (data.to === "done" && task && /^(T|I|REL)/.test(task)) return { level: "success", title: `${task} is done`, body: String(data.reason ?? ""), screen: "board", task };
+      if (data.to === "done" && task && /^(T|I|REL)/.test(task) && !/cancelled|superseded/.test(String(data.reason ?? "")))
+        return { level: "success", title: `${task} is done`, body: String(data.reason ?? ""), screen: "board", task };
       return null;
     case "review.verdict":
       return data.verdict === "changes_requested" ? { level: "info", title: `Review asked for changes on ${task}`, body: String(data.summary ?? ""), screen: "board", task } : null;
@@ -123,13 +126,17 @@ export function notificationFor(type: string, summary: string, data: Record<stri
       return { level: "info", title: "Usage limit reset", body: "Agents are working again.", screen: "agents" };
     case "phase.changed":
       if (data.to === "build") return { level: "success", title: "The build has started", body: "Agents are now working on the plan.", screen: "agents" };
-      if (data.to === "done") return { level: "success", title: "Your project is done", body: "The release was approved.", screen: "board" };
+      if (data.to === "done") return { level: "success", title: "All done", body: "The work is finished and in your project folder. Send a new request any time.", screen: "board" };
       return null;
     case "change.status":
       if (data.status === "prd_review") return { level: "action", title: `Review the PRD update for ${data.id}`, screen: "docs", doc: "prd" };
       if (data.status === "plan_review") return { level: "action", title: `Review the plan update for ${data.id}`, screen: "team", doc: "plan" };
       if (data.status === "applied") return { level: "success", title: `${data.id} applied`, screen: "board" };
       return null;
+    case "project.track":
+      return { level: "info", title: summary, screen: data.track === "quick" ? "agents" : "docs", doc: "triage" };
+    case "request.done":
+      return { level: "success", title: "Your change is done", body: summary, screen: "board" };
     case "project.killed":
       return { level: "info", title: "All agents stopped", body: summary, screen: "agents" };
     default:

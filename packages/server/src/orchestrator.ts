@@ -792,6 +792,8 @@ export class Orchestrator {
         return docSince("design");
       case "survey":
         return docSince("codebase");
+      case "triage":
+        return docSince("triage");
       default:
         return true;
     }
@@ -823,6 +825,7 @@ export class Orchestrator {
       replan: "submit the updated plan with `botss plan submit .botss/tasks/`",
       screens: "submit the design with `botss doc submit design`",
       survey: "submit the codebase summary with `botss doc submit codebase`",
+      triage: "write `.botss/docs/triage.md` (first line `track: quick|standard|full`) and `botss doc submit triage`",
     };
     this.failRun(
       t,
@@ -834,6 +837,9 @@ export class Orchestrator {
 
   private async onPlanningDone(t: TaskRow, session: string): Promise<void> {
     switch (t.mode) {
+      case "triage":
+        await this.afterTriage();
+        break;
       case "survey":
         this.captureChecksFrom(this.svc.doc("codebase")?.content ?? "", "codebase summary");
         this.createPlanningTask("pm", "discover");
@@ -868,9 +874,12 @@ export class Orchestrator {
     links?: string[];
     attachments?: { name: string; data: string }[];
     kind?: "new" | "feature" | "fix";
+    /** auto: the tech lead sizes the request (triage); otherwise the owner's choice. */
+    track?: "auto" | "quick" | "standard" | "full";
   }): Promise<void> {
-    if (!["idea", "discovery"].includes(this.svc.phase))
-      throw new Error(`the idea can only be submitted in the idea phase (now ${this.svc.phase})`);
+    // A new request is welcome when nothing else is in flight: at the start, or after the last one finished.
+    if (!["idea", "done"].includes(this.svc.phase))
+      throw new Error(`the team is still working on the current request (phase: ${this.svc.phase}). Wait for it to finish, request a change, or cancel the current work first.`);
     const existing = this.svc.settings.existing;
     const kind = input.kind ?? (existing ? "feature" : "new");
     const integ = this.p.sharedDir();
@@ -893,10 +902,62 @@ export class Orchestrator {
     this.svc.submitDoc("idea", ".botss/docs/idea.md", md, "human", null, "approved");
     this.svc.emit("idea.submitted", existing ? `Owner asked for a ${kind} in the existing codebase` : "Owner submitted the idea", { attachments: names.length, kind }, { actor: "human" });
     this.svc.setPhase("discovery");
-    // Existing codebase: the tech lead reads it first, so the PM and the plan build on what is there.
-    if (existing) this.createPlanningTask("tech-lead", "survey");
-    else this.createPlanningTask("pm", "discover");
+    const track = input.track ?? "auto";
+    this.svc.patchState({ track: track === "auto" ? null : track });
+    if (track === "full") this.startFullTrack();
+    else {
+      // Size the work first, like a lead would: a UI tweak should not go through discovery, PRD, and design.
+      this.createPlanningTask("tech-lead", "triage", {
+        note: track === "auto" ? undefined : `The owner chose the **${track}** track. Set the request up that way.`,
+      });
+    }
     void this.tick();
+  }
+
+  private startFullTrack(): void {
+    // Existing codebase: the tech lead reads it first, so the PM and the plan build on what is there.
+    if (this.svc.settings.existing && !this.svc.doc("codebase")) this.createPlanningTask("tech-lead", "survey");
+    else this.createPlanningTask("pm", "discover");
+  }
+
+  /** The tech lead's triage decided how much process this request needs. */
+  private async afterTriage(): Promise<void> {
+    const text = this.svc.doc("triage")?.content ?? "";
+    const m = /track\s*[:=]\s*\**\s*(quick|standard|full)/i.exec(text);
+    const forced = this.svc.state.track;
+    let track = (forced ?? m?.[1]?.toLowerCase() ?? "standard") as "quick" | "standard" | "full";
+    const newTasks = this.svc.tasks({ kind: ["build"] }).filter((x) => x.status === "todo" || x.status === "ready");
+    if (track === "quick" && newTasks.length === 0) track = "standard"; // no tasks were planned: needs a spec after all
+    this.svc.patchState({ track });
+    this.svc.emit("project.track", `Process: ${track} (${track === "quick" ? "build it right away" : track === "standard" ? "short PRD, then a plan" : "full discovery, design, and architecture"})`, { track }, { actor: "tech-lead-1", role: "tech-lead" });
+    if (track === "quick") {
+      // Small, clear work: no gates, no review or QA rounds. The task's verify command still has to pass.
+      for (const x of newTasks) this.svc.patchMeta(x.id, { fast: true });
+      for (const x of newTasks) if (x.hold === "plan") this.svc.updateTask(x.id, { hold: null });
+      if (this.svc.doc("plan")?.status === "submitted") this.svc.setDocStatus("plan", "approved", "quick track", "auto");
+      this.svc.setPhase("build");
+    } else if (track === "standard") {
+      this.createPlanningTask("pm", "draft", {
+        note: "**Standard track:** write a short PRD (about one page) straight from the request. Ask the owner only if something genuinely blocks you. The team skips visual directions and a separate architecture document.",
+      });
+    } else {
+      this.startFullTrack();
+    }
+  }
+
+  /** Owner's "cancel current work": stop agents and close everything in flight, keeping finished work. */
+  async cancelCurrentWork(): Promise<void> {
+    await this.killAll();
+    for (const t of this.svc.tasks()) {
+      if (t.status === "done") continue;
+      this.svc.setStatus(t.id, "done", { force: true, reason: "cancelled by the owner", extra: { hold: "cancelled" } });
+    }
+    for (const q of this.svc.questions("open")) this.svc.markAnswered(q.id, "(cancelled by the owner)", "human");
+    const ch = this.activeChange();
+    if (ch) this.setChange(ch.id, "cancelled");
+    this.svc.patchState({ paused: false, pauseReason: null, track: null });
+    this.svc.setPhase("idea");
+    this.svc.emit("project.cancelled", "Owner cancelled the current work. Finished work is kept; send a new request when you are ready.", {}, { actor: "human" });
   }
 
   private saveAttachments(dir: string, list: { name: string; data: string }[]): string[] {
@@ -978,8 +1039,16 @@ export class Orchestrator {
     }
     switch (gate) {
       case "prd":
-        this.svc.setPhase("design_direction");
-        this.createPlanningTask("designer", "direction");
+        if (this.svc.state.track === "standard") {
+          // Standard track: no visual directions or architecture document; straight to the plan.
+          this.svc.setPhase("plan_review");
+          this.createPlanningTask("tech-lead", "plan", {
+            note: "**Standard track:** there is no separate architecture document. Plan the approved PRD directly, keep it small, and put any decisions in `.botss/docs/plan-summary.md`.",
+          });
+        } else {
+          this.svc.setPhase("design_direction");
+          this.createPlanningTask("designer", "direction");
+        }
         break;
       case "design":
         this.svc.setPhase("architecture_review");
@@ -1499,7 +1568,15 @@ export class Orchestrator {
   private async maybeAdvanceAfterBuild(): Promise<void> {
     if (this.svc.phase === "build") {
       const work = this.svc.tasks({ kind: ["build", "integrate"] });
-      if (work.length && work.every((x) => x.status === "done")) await this.enterRelease();
+      if (work.length && work.every((x) => x.status === "done")) {
+        if (this.svc.state.track === "quick") {
+          // Quick track: no release QA round. Summarize what changed and tell the owner.
+          this.svc.setPhase("release_review");
+          await this.submitReleaseSummary();
+          // (the summary may already have auto-approved the release when its gate is off)
+          if ((this.svc.phase as string) === "release_review") await this.approve("release", "quick track", "auto");
+        } else await this.enterRelease();
+      }
     } else if (this.svc.phase === "release_review") {
       const rel = this.svc.tasks({ kind: ["release"] });
       if (rel.length && rel.every((x) => x.status === "done")) await this.submitReleaseSummary();

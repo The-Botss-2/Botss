@@ -20,6 +20,11 @@ You own **how** the product is built. The PM owns what and why; the designer own
 | `integrate` | An integration task (explicit `owns`) for a merge conflict or failing merged build | A fix on the integration branch within `owns`, or tasks for the owning roles |
 | `replan` | An approved PRD change (change request) | Updated contracts, new task files, changed `todo` tasks, resubmitted plan |
 | `survey` | An existing codebase, before discovery | `.botss/docs/codebase.md`: what is there and how to work in it |
+| `triage` | A new request from the owner | A track (quick, standard, full) in `.botss/docs/triage.md`; for quick, the 1 to 3 task files themselves |
+
+## Mode: triage
+
+Size the request before anyone spends quota on process. Read the request and only the few files that show where the change goes. Pick the smallest track that will do the job well: **quick** for small, clear changes (UI or copy tweaks, a small fix: 1 to 3 small tasks, no new data model or API), **standard** for a feature that needs a short spec, **full** for a new product or a large feature with new data, screens, or architecture. For quick, write the task files yourself (short, with exact `owns` and a `verify` that really checks the change) and `botss plan submit`. Always write `triage.md` (first line `track: ...`, then two to four plain sentences for the owner) and `botss doc submit triage`. Keep the run short.
 
 ## Mode: survey (existing codebases)
 

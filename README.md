@@ -18,6 +18,18 @@ You describe an app. A product manager, tech lead, designer, backend and fronten
 
 Botss turns Claude Code into a small software company that works for you:
 
+**Just enough process.** Every request is sized first by the tech lead, like a real lead sizing a ticket:
+
+| Track | For | What happens |
+|---|---|---|
+| **Quick** | UI tweaks, copy changes, small fixes | The tech lead writes 1 to 3 tasks and the engineer does them right away. The task's own checks must pass; no PRD, design, review rounds, or approvals. You get a "done" notification. |
+| **Standard** | A feature that needs a short spec | A one-page PRD for you to approve, then a plan to approve, then the build with review and QA. |
+| **Full** | A new product or a big feature | The whole flow below. |
+
+Pick **Auto** (the default) to let the tech lead decide, or choose a track yourself. When a request is done, just send the next one. You can cancel the current work at any time; finished work stays.
+
+The full flow:
+
 1. **You write an idea**, in plain words ("a booking app for my barbershop").
 2. **The PM asks you a short batch of questions**, each with a recommended answer, then writes a PRD (product requirements document) for you to approve.
 3. **The designer proposes 2 to 3 visual directions.** You pick one, and they produce design tokens and screen mockups.
@@ -109,7 +121,7 @@ botss up                # starts Botss and opens the dashboard for this folder
 
 ## Your first build
 
-Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.md`](examples/todo-with-auth.md) is one you can paste in.
+For a small change, type it on the Idea screen and leave the process on **Auto**: it is built right away. The steps below are the **full** track for a new app. Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.md`](examples/todo-with-auth.md) is one you can paste in.
 
 1. **Set limits first.** In **Settings**, set a daily token budget you are comfortable with and keep *max concurrent agents* at 2 or 3. Leave every approval gate on.
 2. **Idea.** Describe the app, add screenshots or links if you have them, choose a stakes level, and submit.

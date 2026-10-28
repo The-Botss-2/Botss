@@ -53,7 +53,7 @@ test("folder picker: deep link, navigate, mkdir, go up, open new and existing fo
   expect(fs.existsSync(path.join(h.dir, "legacy-shop", ".botss"))).toBe(true);
   await page.evaluate((pid) => (window.location.hash = `#/p/${pid}/idea`), legacyId);
   await expect(page.getByRole("heading", { name: "What should the team change?" })).toBeVisible();
-  await expect(page.getByTestId("existing-note")).toContainText("Documents → codebase");
+  await expect(page.getByTestId("existing-note")).toContainText("sizes your request first");
   await expect(page.getByTestId("kind-feature")).toBeVisible();
 
   // Back to projects; open the empty folder as a new project.

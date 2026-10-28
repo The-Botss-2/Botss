@@ -150,6 +150,8 @@ export interface ProjectState {
   designChoice?: string | null;
   previewRunning?: boolean;
   alerts?: Alert[];
+  /** Process for the current request: decided by the tech lead's triage, or chosen by the owner. */
+  track?: "quick" | "standard" | "full" | null;
 }
 
 export interface RoleDef {

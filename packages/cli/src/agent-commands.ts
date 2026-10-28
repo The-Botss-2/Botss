@@ -24,6 +24,7 @@ const STANDARD_PATHS: Record<string, string> = {
   prd: ".botss/docs/prd.md",
   architecture: ".botss/docs/architecture.md",
   codebase: ".botss/docs/codebase.md",
+  triage: ".botss/docs/triage.md",
   design: ".botss/docs/design/DESIGN.md",
   plan: ".botss/docs/plan-summary.md",
 };

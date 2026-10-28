@@ -78,7 +78,8 @@ export type RunMode =
   | "audit"
   | "survey"
   | "change"
-  | "replan";
+  | "replan"
+  | "triage";
 
 export type DocStatus = "draft" | "submitted" | "approved" | "changes_requested";
 
