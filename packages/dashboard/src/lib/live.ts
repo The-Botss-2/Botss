@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { useEffect, useSyncExternalStore } from "react";
 import { api, getToken, pp } from "./api";
+import { noteStore } from "./notify";
 import type { BotssEvent } from "./types";
 
 // Live updates. One WebSocket per open project. The server batches events every 100 ms and says which query
@@ -134,10 +135,16 @@ export function useLive(pid: string, qc: QueryClient): void {
           retry = 0;
           store.setStatus("live");
           void backfill();
+          void api<BotssEvent[]>("GET", pp(pid, "/notifications?limit=200"))
+            .then((n) => noteStore(pid).backfill(n))
+            .catch(() => {});
           // After a reconnect everything may be stale.
           if (wasRetry) void qc.invalidateQueries({ queryKey: ["p", pid] });
         } else if (msg.type === "events") {
-          if (msg.events?.length) store.add(msg.events);
+          if (msg.events?.length) {
+            store.add(msg.events);
+            noteStore(pid).live(msg.events);
+          }
           if (msg.topics?.length) queue(msg.topics);
         }
       };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Shell, defaultScreen } from "./components/Shell";
 import { Toaster } from "./components/ui";
+import { useUnreadActions } from "./components/Notifications";
 import { getToken, setToken } from "./lib/api";
 import { useProject } from "./lib/queries";
 import { href, navigate, useRoute } from "./lib/router";
@@ -45,6 +46,7 @@ export function App() {
 
 function ProjectRoute({ pid, screen, rest }: { pid: string; screen: string; rest: string[] }) {
   const project = useProject(pid);
+  const unreadActions = useUnreadActions(pid);
   useEffect(() => {
     if (!screen && project.data) {
       const [s = "board", ...r] = defaultScreen(project.data).split("/");
@@ -52,8 +54,9 @@ function ProjectRoute({ pid, screen, rest }: { pid: string; screen: string; rest
     }
   }, [screen, project.data, pid]);
   useEffect(() => {
-    document.title = project.data ? `${project.data.name} · Botss` : "Botss";
-  }, [project.data]);
+    const base = project.data ? `Botss · ${project.data.name}` : "Botss";
+    document.title = unreadActions > 0 ? `(${unreadActions}) ${base}` : base;
+  }, [project.data, unreadActions]);
   return (
     <Shell pid={pid} screen={screen}>
       <div className="px-6 py-5 max-[1100px]:px-4">

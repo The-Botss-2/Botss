@@ -557,7 +557,16 @@ export function GateBar({
       data-testid="gate-bar"
     >
       <div className="flex-1 text-[13.5px]">
-        {gate === "design" ? (
+        {gate === "release" ? (
+          <>
+            <span className="font-semibold">Your review is needed.</span>{" "}
+            <span className="text-ink-2">
+              {project?.settings.workspace === "isolated"
+                ? `Approve the release; then merge botss/integration into your main branch when you are ready.`
+                : `Approve the release. Everything is already in ${project?.root ?? "the project folder"}.`}
+            </span>
+          </>
+        ) : gate === "design" ? (
           <>
             <span className="font-semibold">
               Review the screens, then approve the design or ask for changes.

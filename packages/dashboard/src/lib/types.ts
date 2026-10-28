@@ -127,6 +127,8 @@ export interface Settings {
   security_audit: boolean;
   /** The project is an existing codebase (set when it was opened). */
   existing?: boolean;
+  /** direct: agents edit the project folder itself; isolated: git worktrees and branches. */
+  workspace?: "direct" | "isolated";
   max_review_rounds: number;
   max_verify_failures: number;
   port_base: number;
@@ -250,6 +252,9 @@ export interface Run {
   result_text: string | null;
   last_action: string | null;
   last_file: string | null;
+  activity?: string | null;
+  /** JSON string of the agent's latest TodoWrite list. */
+  todos?: string | null;
 }
 
 export interface ReviewComment {
@@ -421,6 +426,7 @@ export interface Agent {
   created_at: string;
   active: boolean;
   run: Run | null;
+  activity?: string | null;
 }
 
 export interface PlanInfo {
@@ -528,4 +534,20 @@ export interface TranscriptItem {
 export interface Transcript {
   run: Run | null;
   items: TranscriptItem[];
+}
+
+export interface Notify {
+  level: "action" | "warning" | "success" | "info";
+  title: string;
+  body?: string;
+  screen: string;
+  doc?: string;
+  task?: string | null;
+}
+
+export interface TaskDiff {
+  diff: string;
+  files?: { path: string; status: "added" | "modified" | "deleted" | string }[];
+  base?: string;
+  head?: string;
 }

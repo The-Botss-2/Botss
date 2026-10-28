@@ -19,8 +19,17 @@ describe("eventsToItems", () => {
   it("pairs results with their tool calls by toolUseId, keeps Edit inputs, and flags guard blocks", () => {
     const items = eventsToItems([
       ev("run.text", "Plan…", { text: "Plan: edit the handler, then run tests." }),
-      ev("run.tool", "Editing `src/a.ts`", { tool: "Edit", file: "src/a.ts", input: { old_string: "a", new_string: "b" }, toolUseId: "t1" }),
-      ev("run.tool", "Running `pnpm test`", { tool: "Bash", input: { command: "pnpm test" }, toolUseId: "t2" }),
+      ev("run.tool", "Editing `src/a.ts`", {
+        tool: "Edit",
+        file: "src/a.ts",
+        input: { old_string: "a", new_string: "b" },
+        toolUseId: "t1",
+      }),
+      ev("run.tool", "Running `pnpm test`", {
+        tool: "Bash",
+        input: { command: "pnpm test" },
+        toolUseId: "t2",
+      }),
       ev("run.result", "ok", { toolUseId: "t1", isError: false, text: "edited" }),
       ev("run.result", "✗ Botss guard", { toolUseId: "t2", isError: true, text: "Botss guard: blocked" }),
     ]);

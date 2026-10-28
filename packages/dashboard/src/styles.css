@@ -486,3 +486,35 @@ dialog.modal::backdrop {
   scrollbar-width: thin;
   scrollbar-color: var(--rule-strong) transparent;
 }
+
+/* Live status line on agent cards: a slow shimmer while the agent works. */
+.status-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--ink) 0%,
+    var(--ink) 40%,
+    var(--ink-3) 50%,
+    var(--ink) 60%,
+    var(--ink) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: status-shimmer 2.6s linear infinite;
+}
+@keyframes status-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-shimmer {
+    animation: none;
+    color: var(--ink);
+    background: none;
+  }
+}

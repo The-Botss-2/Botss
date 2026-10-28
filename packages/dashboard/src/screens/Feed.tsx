@@ -49,8 +49,10 @@ export function glyphFor(type: string): { g: string; color: string; label: strin
   return { g: "·", color: "var(--ink-3)", label: type };
 }
 
-export function Glyph({ type }: { type: string }) {
-  const { g, color, label } = glyphFor(type);
+export function Glyph({ type, summary }: { type: string; summary?: string }) {
+  // Direct workspace: merge.ok means "finished: N files changed", not a git merge.
+  const finished = type === "merge.ok" && summary !== undefined && / finished/.test(summary);
+  const { g, color, label } = finished ? { g: "✓", color: "var(--ok)", label: "finished" } : glyphFor(type);
   return (
     <span
       className="mono inline-block w-4 text-center text-[12px] font-semibold"
@@ -63,7 +65,7 @@ export function Glyph({ type }: { type: string }) {
   );
 }
 
-const CHATTER = new Set(["run.tool", "run.text", "run.init", "run.retry"]);
+const CHATTER = new Set(["run.tool", "run.text", "run.init", "run.retry", "run.result"]);
 const ROW = 30;
 
 function isImportant(e: BotssEvent): boolean {
@@ -234,7 +236,7 @@ const FeedRow = memo(function FeedRow({ e, top, pid }: { e: BotssEvent; top: num
       title={`${e.type} · ${e.summary}`}
     >
       <span className="mono text-[11px] text-ink-3 tabular">{fmtTime(e.ts)}</span>
-      <Glyph type={e.type} />
+      <Glyph type={e.type} summary={e.summary} />
       <span
         className="mono truncate text-[11.5px] font-medium"
         style={{ color: roleColor(role === "system" ? null : actor) }}

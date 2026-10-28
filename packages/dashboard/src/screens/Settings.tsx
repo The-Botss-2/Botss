@@ -255,6 +255,22 @@ function SettingsForm({ pid, p }: { pid: string; p: ProjectInfo }) {
         />
       </Row>
 
+      <h2 className="section-title mt-8 mb-1">WORKSPACE</h2>
+      <Row label="Where agents work" hint="Set when the project was created.">
+        <div className="text-[13px]" data-testid="workspace-info">
+          {p.settings.workspace === "isolated" ? (
+            <>
+              Isolated git worktrees: each task works on its own branch and is merged into botss/integration.
+            </>
+          ) : (
+            <>
+              Agents work directly in <span className="mono break-all">{p.root}</span>. No branches or
+              commits; Botss keeps a snapshot of each task's files so you can see what changed.
+            </>
+          )}
+        </div>
+      </Row>
+
       <h2 className="section-title mt-8 mb-1">SAFETY</h2>
       <Row
         label="Permission mode"
@@ -290,7 +306,11 @@ function SettingsForm({ pid, p }: { pid: string; p: ProjectInfo }) {
       </Row>
       <Row
         label="Integration checks"
-        hint="Run on the integration branch after every merge. Usually set by the scaffold task."
+        hint={
+          p.settings.workspace === "isolated"
+            ? "Run on the integration branch after every merge. Usually set by the scaffold task."
+            : "Run in the project folder after every finished task. Usually set by the scaffold task."
+        }
       >
         <ul className="mb-2 flex flex-col gap-1">
           {draft.checks.map((c, i) => (

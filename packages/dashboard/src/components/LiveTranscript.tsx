@@ -118,11 +118,13 @@ function useFrame<T>(value: T): T {
   return v;
 }
 
-export function useRunItems(
+/** Events of one run: HTTP backfill by run id merged with the live store, coalesced per animation frame.
+ * With `agent`, the agent's messages and questions during the run are included too (they carry no run id). */
+export function useRunEvents(
   pid: string,
   runId: string | null,
-  active: boolean,
-): { items: LiveItem[]; lastTs: number; loading: boolean } {
+  agent?: string | null,
+): { events: BotssEvent[]; loading: boolean } {
   const { events } = useEvents(pid);
   const backfill = useQuery({
     queryKey: ["run-events", pid, runId],
@@ -131,7 +133,6 @@ export function useRunItems(
     enabled: Boolean(runId),
     staleTime: Infinity,
   });
-  const transcript = useTranscript(pid, runId, active);
   const mine = useMemo(() => {
     if (!runId) return [] as BotssEvent[];
     const seen = new Set<number>();
@@ -141,16 +142,37 @@ export function useRunItems(
       seen.add(e.id);
       out.push(e);
     }
+    let first = out[0]?.id ?? Infinity;
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i]!;
       if (e.run_id === runId && !seen.has(e.id)) {
         seen.add(e.id);
         out.push(e);
+        if (e.id < first) first = e.id;
+      }
+    }
+    if (agent) {
+      for (let i = events.length - 1; i >= 0 && events[i]!.id >= first; i--) {
+        const e = events[i]!;
+        if (!e.run_id && e.actor === agent && /^(msg|ask)\./.test(e.type) && !seen.has(e.id)) {
+          seen.add(e.id);
+          out.push(e);
+        }
       }
     }
     return out.sort((a, b) => a.id - b.id);
-  }, [events, backfill.data, runId]);
-  const frameEvents = useFrame(mine);
+  }, [events, backfill.data, runId, agent]);
+  return { events: useFrame(mine), loading: Boolean(runId) && backfill.isLoading };
+}
+
+export function useRunItems(
+  pid: string,
+  runId: string | null,
+  active: boolean,
+): { items: LiveItem[]; lastTs: number; loading: boolean } {
+  const transcript = useTranscript(pid, runId, active);
+  const { events: frameEvents, loading } = useRunEvents(pid, runId);
+
   return useMemo(() => {
     const fromEvents = eventsToItems(frameEvents);
     const rich = fromEvents.some((i) => i.kind === "tool" || i.kind === "text");
@@ -162,9 +184,9 @@ export function useRunItems(
     return {
       items: items.slice(-MAX_ITEMS),
       lastTs: toDate(last?.ts)?.getTime() ?? 0,
-      loading: Boolean(runId) && backfill.isLoading,
+      loading,
     };
-  }, [frameEvents, active, transcript.data, runId, backfill.isLoading]);
+  }, [frameEvents, active, transcript.data, loading]);
 }
 
 // --------------------------------------------------------------------------------------------- render

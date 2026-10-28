@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   cleanup,
+  dismissToasts,
   DEFAULT_BUILD_SCENARIO,
   goto,
   implementSteps,
@@ -77,6 +78,7 @@ test.describe("a seeded two-task build", () => {
     await expect(feed.locator('[data-type="merge.ok"]').filter({ hasText: "Merged T000" })).toBeVisible();
     await expect(feed.locator('[data-type="merge.ok"]').filter({ hasText: "Merged T001" })).toBeVisible();
     await expect(feed.locator('[data-type="run.tool"]')).toHaveCount(0);
+    await dismissToasts(page);
     await page.getByTestId("hide-chatter").uncheck();
     await expect(feed.locator('[data-type="run.tool"]').first()).toBeAttached();
 
@@ -147,7 +149,9 @@ test("kill switch asks for confirmation in-page, then stops agents and pauses", 
     .getByRole("dialog", { name: "Stop every agent now?" })
     .getByRole("button", { name: "Stop all agents" })
     .click();
-  await expect(page.getByText(/Kill switch: stopped 1 agent run/)).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: /Kill switch: stopped 1 agent run\./ }),
+  ).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "paused: kill switch" })).toBeVisible();
   expect(h.project.orch.activeRuns()).toHaveLength(0);
   expect(h.project.svc.state.paused).toBe(true);

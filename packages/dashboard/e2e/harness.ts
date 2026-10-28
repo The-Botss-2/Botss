@@ -45,6 +45,12 @@ export async function goto(page: Page, h: Harness, screen: string): Promise<void
 
 export const status = (h: Harness, id: string) => h.project.svc.task(id)?.status;
 
+/** Close notification toasts so they do not cover what a test clicks next. */
+export async function dismissToasts(page: Page): Promise<void> {
+  const close = page.getByRole("button", { name: "Dismiss notification" });
+  while ((await close.count()) > 0) await close.first().click();
+}
+
 export interface SeedTask {
   role: string;
   title?: string;

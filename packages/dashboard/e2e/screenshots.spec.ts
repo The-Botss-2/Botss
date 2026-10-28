@@ -188,6 +188,20 @@ test("screenshot tour", async ({ page }) => {
               "Reminder opt-out flag is `sms_opt_in` on Booking; defaults to true.",
             ],
           },
+          {
+            todo: [
+              { content: "Read the booking model", status: "completed" },
+              { content: "Add the reminder job table", status: "completed" },
+              {
+                content: "Write the reminder worker",
+                status: "in_progress",
+                activeForm: "Writing the reminder worker",
+              },
+              { content: "Hook up the SMS provider", status: "pending" },
+              { content: "Add the opt-out flag", status: "pending" },
+              { content: "Run the tests", status: "pending" },
+            ],
+          },
           { hang: true },
         ],
       },
@@ -209,6 +223,19 @@ test("screenshot tour", async ({ page }) => {
           },
           { text: "Queue renders. Next: refresh when a walk-in is added (that was QA's bug B-0001)." },
           { bash: 'node -e "process.exit(0)"', allowFail: true },
+          {
+            todo: [
+              { content: "Read the slots contract", status: "completed" },
+              { content: "Build the queue list component", status: "completed" },
+              { content: "Merge walk-ins with booked slots", status: "completed" },
+              {
+                content: "Refresh when a walk-in is added",
+                status: "in_progress",
+                activeForm: "Refreshing the queue on new walk-ins",
+              },
+              { content: "Run the tests", status: "pending" },
+            ],
+          },
           { hang: true },
         ],
       },
@@ -453,11 +480,15 @@ test("screenshot tour", async ({ page }) => {
 
   await goto(page, h, "agents");
   await expect(page.getByTestId("agent-devops-1")).toContainText("working");
-  await expect(page.getByTestId("agent-frontend-1").getByTestId("live-text").first()).toBeVisible();
+  await expect(page.getByTestId("agent-frontend-1").getByTestId("plan-checklist")).toBeVisible();
+  await expect(page.getByTestId("agent-devops-1").getByTestId("plan-checklist")).toBeVisible();
   await shot(page, "agents-live");
-  await page.getByRole("button", { name: "Focus frontend-1" }).click();
+  await page.getByTestId("agent-frontend-1").getByTestId("details-toggle").click();
+  await page.getByTestId("agent-frontend-1").getByTestId("agent-details").scrollIntoViewIfNeeded();
+  await shot(page, "agents-details");
+  await page.getByTestId("agent-frontend-1").getByTestId("details-toggle").click();
+  await page.evaluate(() => document.getElementById("main")?.scrollTo(0, 0));
   await shot(page, "agents");
-  await page.getByRole("button", { name: "Back to all agents" }).click();
 
   await goto(page, h, "questions");
   await expect(page.getByTestId("alert")).toBeVisible();
@@ -550,6 +581,24 @@ test("screenshot tour", async ({ page }) => {
   await expect(page.getByTestId("gate-bar")).toContainText("CR-001 updated the PRD");
   await shot(page, "change-review");
 
+  // Notifications: a few live ones (toast) and the bell panel open.
+  await goto(page, h, "board");
+  svc.setStatus("T003", "done", { force: true, actor: "orchestrator", reason: "merged" });
+  svc.alert("Checks failed after merging T003: `pnpm test` (2 failing tests).", "T003");
+  const am2 = svc.message(
+    { agent: "frontend-1", role: "frontend" },
+    "@human",
+    "Should the queue show customers' phone numbers to barbers?",
+    "ask",
+    { task: "T006" },
+  );
+  void am2;
+  await expect(page.getByTestId("notify-toast").first()).toBeVisible();
+  await page.getByTestId("bell").click();
+  await expect(page.getByTestId("bell-panel")).toBeVisible();
+  await shot(page, "notifications");
+  await page.keyboard.press("Escape");
+
   await page.goto(`${h.server.url}/#/open?path=${encodeURIComponent(h.dir)}`);
   await expect(page.getByTestId("folder-picker")).toBeVisible();
   await expect(page.getByTestId("fs-entry-fade-and-co")).toBeVisible();
@@ -561,5 +610,5 @@ test("screenshot tour", async ({ page }) => {
   await shot(page, "projects");
 
   const files = fs.readdirSync(OUT).filter((f) => f.endsWith(".png"));
-  expect(files.length).toBeGreaterThanOrEqual(25);
+  expect(files.length).toBeGreaterThanOrEqual(27);
 });

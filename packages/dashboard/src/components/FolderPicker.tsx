@@ -253,6 +253,10 @@ function PickerBody({
               Botss will put the app and its files in:{" "}
               <span className="mono font-medium break-all text-ink">{path}</span>
             </p>
+            <p className="hint mt-1">
+              Botss works directly in this folder. It adds one hidden .botss folder for plans and notes; it
+              does not use git.
+            </p>
             <label className="mt-2 flex items-center gap-2 text-[13px]">
               <input
                 type="checkbox"

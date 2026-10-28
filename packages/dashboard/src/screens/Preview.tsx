@@ -27,7 +27,14 @@ export function PreviewScreen({ pid }: { pid: string }) {
 
   return (
     <div className="flex h-[calc(100vh-150px)] min-h-[480px] flex-col">
-      <PageHeader title="Preview" kicker="the integration branch, running locally (docker compose)">
+      <PageHeader
+        title="Preview"
+        kicker={
+          project.data?.settings.workspace === "isolated"
+            ? "the integration branch, running locally (docker compose)"
+            : "your project folder, running locally (docker compose)"
+        }
+      >
         <button className="btn btn-primary" disabled={busy} onClick={() => run("start", start)}>
           {start.isPending ? "Starting…" : "Start"}
         </button>

@@ -18,6 +18,7 @@ import type {
   SkillsInfo,
   Task,
   TaskDetail,
+  TaskDiff,
   UsageInfo,
 } from "./types";
 
@@ -41,13 +42,7 @@ export const useTasks = (pid: string) => useP<Task[]>(pid, "tasks", "/tasks");
 export const useTask = (pid: string, id: string | null) =>
   useP<TaskDetail>(pid, "tasks", `/tasks/${encodeURIComponent(id ?? "")}`, [], { enabled: Boolean(id) });
 export const useTaskDiff = (pid: string, id: string, enabled: boolean) =>
-  useP<{ diff: string; base?: string; head?: string }>(
-    pid,
-    "tasks",
-    `/tasks/${encodeURIComponent(id)}/diff`,
-    ["diff"],
-    { enabled },
-  );
+  useP<TaskDiff>(pid, "tasks", `/tasks/${encodeURIComponent(id)}/diff`, ["diff"], { enabled });
 export const useQuestions = (pid: string) => useP<Question[]>(pid, "questions", "/questions");
 export const useDocs = (pid: string) => useP<DocRow[]>(pid, "docs", "/docs");
 export const useDoc = (pid: string, name: string | null) =>

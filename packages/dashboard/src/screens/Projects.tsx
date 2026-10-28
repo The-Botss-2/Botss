@@ -124,7 +124,7 @@ export function ProjectsScreen({ openPath = null }: { openPath?: string | null }
               Open a project
             </h2>
             <p className="mb-4 text-[13px] text-ink-2">
-              Any git repository on this machine. New folders can be initialized here.
+              Any folder on this machine. New folders can be initialized here.
             </p>
             <form
               onSubmit={(e) => {

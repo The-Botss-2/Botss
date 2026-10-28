@@ -4,7 +4,9 @@ import path from "node:path";
 import {
   cleanup,
   DEFAULT_BUILD_SCENARIO,
+  dismissToasts,
   goto,
+  implementSteps,
   openDashboard,
   seed,
   startHarness,
@@ -108,6 +110,7 @@ test("change request: PM updates the PRD, owner approves, tech lead replans, own
   // PM updates the PRD → owner reviews it from the callout.
   const callout = page.getByTestId("change-callout");
   await expect(callout).toContainText("PRD needs your review", { timeout: 90_000 });
+  await dismissToasts(page);
   await callout.getByRole("link", { name: /Review the updated PRD/ }).click();
   const gate = page.getByTestId("gate-bar");
   await expect(gate).toContainText("CR-001 updated the PRD");
@@ -125,6 +128,7 @@ test("change request: PM updates the PRD, owner approves, tech lead replans, own
     "replan merged",
     60_000,
   );
+  await dismissToasts(page);
   await page
     .getByTestId("change-callout")
     .getByRole("link", { name: /Review the updated plan/ })
@@ -201,6 +205,17 @@ test("live agents: the panel streams text, tool calls with inline content, and t
       steps: [
         { botss: ["task", "start", "${BOTSS_TASK}"] },
         { text: "I'll add the slots endpoint first, then wire the tests." },
+        {
+          todo: [
+            { content: "Read the slots contract", status: "completed" },
+            {
+              content: "Write the slots endpoint",
+              status: "in_progress",
+              activeForm: "Writing the slots endpoint",
+            },
+            { content: "Run the tests", status: "pending" },
+          ],
+        },
         { write: "src/${BOTSS_TASK}.txt", content: "slots endpoint\nline two\n" },
         { bash: "echo checking-the-build" },
         { hang: true },
@@ -211,6 +226,17 @@ test("live agents: the panel streams text, tool calls with inline content, and t
   await seed(h, { T001: { role: "backend", title: "Slots API" } });
   const panel = page.getByTestId("agent-backend-1");
   await expect(panel).toContainText("working", { timeout: 90_000 });
+  // Visual card: plan checklist with progress, plain-language status, stage track, files.
+  await expect(panel.getByTestId("plan-progress")).toHaveText("1 of 3 steps", { timeout: 30_000 });
+  await expect(panel.getByTestId("plan-checklist").locator('[data-status="in_progress"]')).toContainText(
+    "Writing the slots endpoint",
+  );
+  await expect(panel.getByTestId("agent-label")).not.toBeEmpty();
+  await expect(panel.getByTestId("stage-track")).toContainText("Building");
+  await expect(panel.getByTestId("files-touched")).toContainText("T001.txt");
+  await expect(page.getByTestId("team-summary")).toContainText("1 agent working");
+  await expect(panel.getByTestId("live-transcript")).toHaveCount(0);
+  await panel.getByTestId("details-toggle").click();
   const live = panel.getByTestId("live-transcript");
   await expect(live.getByTestId("live-text")).toContainText("slots endpoint first", { timeout: 30_000 });
   await expect(live.locator('[data-tool="Write"]')).toContainText("src/T001.txt");
@@ -226,4 +252,64 @@ test("live agents: the panel streams text, tool calls with inline content, and t
   await expect(drawer.getByTestId("live-transcript").locator('[data-tool="Write"]')).toContainText(
     "src/T001.txt",
   );
+});
+
+test("notifications: ask @human toasts, bell counts, click goes to Questions; done toast; direct-mode diff", async ({
+  page,
+}) => {
+  h = await startHarness(
+    {
+      ...DEFAULT_BUILD_SCENARIO,
+      "backend:implement": {
+        steps: [
+          { botss: ["task", "start", "${BOTSS_TASK}"] },
+          { botss: ["ask", "@human", "Which currency should prices use?"] },
+        ],
+      },
+      "backend:implement:resume": { steps: [{ expectPrompt: "Euros" }, ...implementSteps()] },
+    },
+    { workspace: "direct" },
+  );
+  await openDashboard(page, h, "board");
+  await expect(page.getByTestId("bell-count")).toHaveCount(0);
+  await seed(h, { T001: { role: "backend", title: "Prices API" } });
+
+  const toast = page.getByTestId("notify-toast").filter({ hasText: "asks you" });
+  await expect(toast).toBeVisible({ timeout: 90_000 });
+  await expect(toast).toHaveAttribute("data-level", "action");
+  // Unread: "The build has started" (from seeding the build) and the question.
+  await expect(page.getByTestId("bell-count")).toHaveText("2");
+  await expect.poll(() => page.title()).toMatch(/^\(1\) Botss · /);
+  await toast.click();
+  await expect(page).toHaveURL(/#\/p\/[^/]+\/questions/);
+  await expect(toast).toHaveCount(0);
+
+  // Bell panel: "Needs you" lists the open question; mark all read clears the count.
+  await page.getByTestId("bell").click();
+  await expect(page.getByTestId("needs-you")).toContainText("asks you");
+  await expect(page.getByTestId("needs-you").getByTestId("notify-item")).toHaveCount(1);
+  await page.getByRole("button", { name: "Mark all read" }).click();
+  await expect(page.getByTestId("bell-count")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await waitFor(() => h!.project.svc.runs({ task: "T001" })[0]?.ended_at, "first run ended");
+  const card = page.locator('[data-testid^="question-Q-"]');
+  await card.getByLabel("Your answer").fill("Euros");
+  await card.getByRole("button", { name: "Send answer" }).click();
+  await expect(page.getByTestId("notify-toast").filter({ hasText: "T001 is done" })).toBeVisible({
+    timeout: 150_000,
+  });
+  await expect(page.getByTestId("notify-toast").filter({ hasText: "T001 is done" })).toHaveAttribute(
+    "data-level",
+    "success",
+  );
+
+  // Direct workspace: the Diff tab lists files changed since the task started; no branch row.
+  await goto(page, h, "board/T001");
+  const drawer = page.getByTestId("task-drawer");
+  await expect(drawer.getByText("branch", { exact: true })).toHaveCount(0);
+  await drawer.getByRole("tab", { name: /Diff/ }).click();
+  await expect(drawer.getByTestId("task-diff")).toContainText("Changes since the task started");
+  await expect(drawer.getByTestId("diff-files")).toContainText("src/T001.txt");
+  await expect(drawer.getByTestId("diff-files")).toContainText("added");
 });

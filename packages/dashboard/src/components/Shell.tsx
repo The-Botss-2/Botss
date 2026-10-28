@@ -8,6 +8,7 @@ import { useTheme, type ThemePref } from "../lib/theme";
 import { PHASE_LABELS, PHASES, type Phase, type ProjectInfo } from "../lib/types";
 import { CountBadge, Icon, Modal, toast, toastError } from "./ui";
 import { RequestChangeButton } from "./Changes";
+import { Bell, NotificationToasts } from "./Notifications";
 
 export const SCREENS: { id: string; label: string; icon: string }[] = [
   { id: "idea", label: "Idea", icon: "idea" },
@@ -97,6 +98,7 @@ export function Shell({ pid, screen, children }: { pid: string; screen: string; 
           <LiveStatus pid={pid} />
         </div>
       </nav>
+      <NotificationToasts pid={pid} />
       <main id="main" tabIndex={-1} className="canvas row-start-2 min-h-0 overflow-y-auto outline-none">
         {children}
       </main>
@@ -162,6 +164,7 @@ function Header({ pid, p }: { pid: string; p: ProjectInfo | undefined }) {
         <div className="ml-auto flex items-center gap-3">
           {p && <QuotaMeter p={p} />}
           <RequestChangeButton pid={pid} p={p} />
+          <Bell pid={pid} />
           <a
             href={href(pid, "questions")}
             className="btn btn-sm"

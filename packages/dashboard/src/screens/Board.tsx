@@ -19,7 +19,12 @@ import {
 } from "../components/ui";
 import { fmtDateTime, fmtTime, toDate } from "../lib/format";
 import { statusColor } from "../lib/roles";
-import { useAction, useTask, useTaskDiff, useTasks } from "../lib/queries";
+import { useAction, useAgents, useProject, useTask, useTaskDiff, useTasks } from "../lib/queries";
+import { ActivityIcon, Checklist, ProgressBar } from "../components/AgentCards";
+import { useRunEvents } from "../components/LiveTranscript";
+import { deriveInsight, parseTodos, todoProgress } from "../lib/activity";
+import { roleColor } from "../lib/roles";
+import type { Agent, Run } from "../lib/types";
 import { href, navigate } from "../lib/router";
 import { STATUS_LABELS, TASK_STATUSES, type Task, type TaskDetail } from "../lib/types";
 import { Glyph } from "./Feed";
@@ -28,10 +33,18 @@ const BOARD_KINDS = new Set(["build", "integrate", "release"]);
 
 export function BoardScreen({ pid, taskId }: { pid: string; taskId: string | null }) {
   const tasks = useTasks(pid);
+  const agents = useAgents(pid);
+  // Working agent per task, for the live status line on cards.
+  const working = new Map<string, Agent>();
+  for (const a of agents.data ?? []) if (a.active && a.current_task) working.set(a.current_task, a);
+  const direct = useProject(pid).data?.settings.workspace !== "isolated";
   const [stripOpen, setStripOpen] = useState(false);
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Live board" kicker="build · review · qa · merge">
+      <PageHeader
+        title="Live board"
+        kicker={direct ? "build · review · qa · done" : "build · review · qa · merge"}
+      >
         {tasks.data && <BoardCounts tasks={tasks.data.filter((t) => BOARD_KINDS.has(t.kind))} />}
       </PageHeader>
       <Loadable q={tasks} rows={6}>
@@ -83,7 +96,7 @@ export function BoardScreen({ pid, taskId }: { pid: string; taskId: string | nul
                   The plan appears here after the tech lead submits it and you approve it in the Team builder.
                 </Empty>
               ) : (
-                <Columns pid={pid} tasks={board} />
+                <Columns pid={pid} tasks={board} working={working} />
               )}
             </>
           );
@@ -122,7 +135,7 @@ function BoardCounts({ tasks }: { tasks: Task[] }) {
   );
 }
 
-function Columns({ pid, tasks }: { pid: string; tasks: Task[] }) {
+function Columns({ pid, tasks, working }: { pid: string; tasks: Task[]; working: Map<string, Agent> }) {
   const by = useMemo(() => {
     const m = new Map<string, Task[]>();
     for (const s of TASK_STATUSES) m.set(s, []);
@@ -151,7 +164,7 @@ function Columns({ pid, tasks }: { pid: string; tasks: Task[] }) {
             <ul className="flex flex-col gap-1.5 p-1.5">
               {list.map((t) => (
                 <li key={t.id}>
-                  <Card pid={pid} t={t} />
+                  <Card pid={pid} t={t} agent={working.get(t.id)} />
                 </li>
               ))}
             </ul>
@@ -162,7 +175,7 @@ function Columns({ pid, tasks }: { pid: string; tasks: Task[] }) {
   );
 }
 
-const Card = memo(function Card({ pid, t }: { pid: string; t: Task }) {
+const Card = memo(function Card({ pid, t, agent }: { pid: string; t: Task; agent?: Agent }) {
   const fresh = Date.now() - (toDate(t.updated_at)?.getTime() ?? 0) < 4000;
   return (
     <a
@@ -195,6 +208,7 @@ const Card = memo(function Card({ pid, t }: { pid: string; t: Task }) {
         )}
         {t.hold && <Badge tone="warn">hold: {t.hold}</Badge>}
       </div>
+      {agent && <CardLive agent={agent} />}
     </a>
   );
 });
@@ -332,6 +346,7 @@ export function TaskDrawer({ pid, id, onClose }: { pid: string; id: string; onCl
 
 function DrawerTab({ pid, d, tab }: { pid: string; d: TaskDetail; tab: DTab }) {
   const t = d.task;
+  const direct = useProject(pid).data?.settings.workspace !== "isolated";
   switch (tab) {
     case "file":
       return (
@@ -349,8 +364,12 @@ function DrawerTab({ pid, d, tab }: { pid: string; d: TaskDetail; tab: DTab }) {
             <dd>{t.after.join(", ") || "-"}</dd>
             <dt className="text-ink-3">verify</dt>
             <dd className="break-all">{t.verify || "-"}</dd>
-            <dt className="text-ink-3">branch</dt>
-            <dd>{t.branch ?? "-"}</dd>
+            {!direct && (
+              <>
+                <dt className="text-ink-3">branch</dt>
+                <dd>{t.branch ?? "-"}</dd>
+              </>
+            )}
             <dt className="text-ink-3">size · rounds</dt>
             <dd>
               {t.size} · review {t.review_round} · qa {t.qa_round}
@@ -376,7 +395,7 @@ function DrawerTab({ pid, d, tab }: { pid: string; d: TaskDetail; tab: DTab }) {
               className="grid grid-cols-[64px_16px_120px_minmax(0,1fr)] items-baseline gap-2 border-b border-rule py-1.5 text-[12.5px]"
             >
               <span className="mono text-[11px] text-ink-3">{fmtTime(e.ts)}</span>
-              <Glyph type={e.type} />
+              <Glyph type={e.type} summary={e.summary} />
               <span className="truncate">
                 {e.actor ? (
                   <AgentName id={e.actor} className="text-[11.5px]" />
@@ -518,6 +537,7 @@ function DrawerTab({ pid, d, tab }: { pid: string; d: TaskDetail; tab: DTab }) {
           <div className="mono mb-2 text-[11px] text-ink-3">
             {run ? `${run.id} · ${run.agent} · ${run.stage}${activeRun ? " · live" : " · last run"}` : ""}
           </div>
+          {run && <LiveChecklist key={`c-${run.id}`} pid={pid} run={run} />}
           <RunTranscript
             key={run?.id ?? "none"}
             pid={pid}
@@ -555,6 +575,33 @@ function TaskDiff({ pid, id }: { pid: string; id: string }) {
   const q = useTaskDiff(pid, id, true);
   if (q.error) return <ErrorBox error={q.error} retry={() => void q.refetch()} />;
   if (!q.data) return <Skeleton rows={8} />;
+  const files = q.data.files;
+  if (files) {
+    // Direct workspace: Botss snapshots the task's files at its first run; no branches or commits.
+    return (
+      <div data-testid="task-diff">
+        <div className="mb-2 text-[13px] font-semibold">Changes since the task started</div>
+        {files.length === 0 ? (
+          <p className="text-[13px] text-ink-3">No files changed yet.</p>
+        ) : (
+          <ul className="mb-4 flex flex-col border border-rule bg-surface" data-testid="diff-files">
+            {files.map((f) => (
+              <li
+                key={f.path}
+                className="flex items-center gap-2 border-b border-rule/60 px-3 py-1.5 text-[12.5px] last:border-b-0"
+              >
+                <Badge tone={f.status === "added" ? "ok" : f.status === "deleted" ? "danger" : "warn"}>
+                  {f.status}
+                </Badge>
+                <span className="mono truncate">{f.path}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {q.data.diff ? <DiffView diff={q.data.diff} /> : null}
+      </div>
+    );
+  }
   if (!q.data.diff)
     return <p className="text-[13px] text-ink-3">No diff yet: the task has no branch or no commits.</p>;
   return (
@@ -563,6 +610,43 @@ function TaskDiff({ pid, id }: { pid: string; id: string }) {
         {q.data.base?.slice(0, 7)}…{q.data.head?.slice(0, 12)}
       </div>
       <DiffView diff={q.data.diff} />
+    </div>
+  );
+}
+
+/** Compact live status on a board card: plain-language action and plan progress. */
+function CardLive({ agent }: { agent: Agent }) {
+  const run = agent.run as
+    (Run & { todos?: string | null; activity?: string | null; last_action?: string | null }) | null;
+  const { done, total } = todoProgress(parseTodos(run?.todos));
+  const label = run?.last_action ?? agent.last_action ?? "Working…";
+  const color = roleColor(agent.role);
+  return (
+    <div className="mt-2 border-t border-rule pt-1.5" data-testid="card-live">
+      <div className="flex items-center gap-1.5 text-[11.5px]" style={{ color }}>
+        <ActivityIcon activity={run?.activity ?? agent.activity} size={13} />
+        <span className="status-shimmer truncate font-medium">{label}</span>
+      </div>
+      {total > 0 && (
+        <div className="mt-1 flex items-center gap-1.5">
+          <ProgressBar done={done} total={total} color={color} />
+          <span className="mono shrink-0 text-[10px] text-ink-3">
+            {done}/{total}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The run's plan checklist above the transcript in the drawer's Live tab. */
+function LiveChecklist({ pid, run }: { pid: string; run: Run }) {
+  const { events } = useRunEvents(pid, run.id, run.agent);
+  const insight = useMemo(() => deriveInsight(events, run), [events, run]);
+  if (!insight.todos) return null;
+  return (
+    <div className="mb-3 border border-rule bg-surface px-4 py-3">
+      <Checklist todos={insight.todos} color={roleColor(run.role)} max={12} />
     </div>
   );
 }
