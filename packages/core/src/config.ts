@@ -75,7 +75,8 @@ export const settingsSchema = z.object({
    */
   workspace: z.enum(WORKSPACE_MODES).default("direct"),
   max_concurrent_agents: z.number().int().min(1).max(32).default(3),
-  daily_token_budget: z.number().int().min(0).default(10_000_000),
+  /** 0 = no Botss limit (Claude Code's own usage limits still apply, and Botss pauses on them). */
+  daily_token_budget: z.number().int().min(0).default(0),
   /** Percentage of the daily budget kept for the owner's own use. Botss stops starting runs above (100 - reserve)%. */
   reserve_percent: z.number().min(0).max(100).default(20),
   auto_resume_after_limit: z.boolean().default(true),

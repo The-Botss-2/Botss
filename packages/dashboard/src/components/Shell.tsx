@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { useLive, useEvents } from "../lib/live";
-import { fmtTokens } from "../lib/format";
 import { useAction, useProject } from "../lib/queries";
 import { href } from "../lib/router";
 import { useTheme, type ThemePref } from "../lib/theme";
@@ -20,7 +19,6 @@ export const SCREENS: { id: string; label: string; icon: string }[] = [
   { id: "agents", label: "Agents", icon: "agents" },
   { id: "feed", label: "Team feed", icon: "feed" },
   { id: "preview", label: "Preview", icon: "preview" },
-  { id: "usage", label: "Usage", icon: "usage" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -162,7 +160,6 @@ function Header({ pid, p }: { pid: string; p: ProjectInfo | undefined }) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-3">
-          {p && <QuotaMeter p={p} />}
           <RequestChangeButton pid={pid} p={p} />
           <Bell pid={pid} />
           <a
@@ -254,16 +251,22 @@ function Header({ pid, p }: { pid: string; p: ProjectInfo | undefined }) {
   );
 }
 
+/** The Botss mark (docs/brand/botss-mark.svg): four connected agents on lime. */
 function Logo() {
   return (
-    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="4" fill="var(--ink)" />
-      <path
-        d="M9 8h9a5 5 0 0 1 0 10H9zM9 18h10a5 5 0 0 1 0 10H9z"
-        fill="none"
-        stroke="var(--paper)"
-        strokeWidth="2.5"
-      />
+    <svg width="24" height="24" viewBox="0 0 100 100" aria-hidden data-testid="botss-mark">
+      <rect x="0" y="0" width="100" height="100" rx="26" fill="#C8FF3C" />
+      <g stroke="#0C0D13" strokeWidth="6" strokeLinecap="round">
+        <line x1="32" y1="32" x2="68" y2="32" />
+        <line x1="32" y1="32" x2="32" y2="68" />
+        <line x1="68" y1="32" x2="68" y2="68" />
+        <line x1="32" y1="68" x2="68" y2="68" />
+        <line x1="32" y1="32" x2="68" y2="68" opacity=".35" />
+      </g>
+      <circle cx="32" cy="32" r="11" fill="#0C0D13" />
+      <circle cx="68" cy="32" r="11" fill="#0C0D13" />
+      <circle cx="32" cy="68" r="11" fill="#0C0D13" />
+      <circle cx="68" cy="68" r="11" fill="#C8FF3C" stroke="#0C0D13" strokeWidth="6" />
     </svg>
   );
 }
@@ -305,53 +308,6 @@ function PhaseStepper({ phase }: { phase: Phase | undefined }) {
   );
 }
 
-function QuotaMeter({ p }: { p: ProjectInfo }) {
-  const used = p.quota.usedToday;
-  const budget = p.settings.daily_token_budget;
-  const allowance = p.quota.allowance;
-  const pct = budget > 0 ? Math.min(100, (used / budget) * 100) : 0;
-  const reservePct = budget > 0 ? p.settings.reserve_percent : 0;
-  const tone = !p.quota.ok ? "var(--danger)" : pct > 100 - reservePct - 10 ? "var(--warn)" : "var(--ink)";
-  const label =
-    budget > 0
-      ? `${fmtTokens(used)} of ${fmtTokens(allowance)} tokens used today`
-      : `${fmtTokens(used)} tokens today, no daily budget`;
-  return (
-    <div
-      className="flex items-center gap-2 max-[1180px]:hidden"
-      title={p.quota.reason ?? label}
-      data-testid="quota-meter"
-    >
-      <div className="mono text-right text-[10.5px] leading-tight text-ink-3">
-        <div>quota today</div>
-        <div className="text-ink-2">
-          {fmtTokens(used)} / {budget > 0 ? fmtTokens(allowance) : "∞"}
-        </div>
-      </div>
-      <div
-        role="meter"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(pct)}
-        className="relative h-2 w-28 overflow-hidden rounded-[1px] border border-rule-strong bg-sunken"
-      >
-        <div className="absolute inset-y-0 left-0" style={{ width: `${pct}%`, background: tone }} />
-        {reservePct > 0 && (
-          <div
-            className="absolute inset-y-0 right-0"
-            style={{
-              width: `${reservePct}%`,
-              background:
-                "repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--ink-3) 45%, transparent) 3px 4px)",
-            }}
-            aria-hidden
-          />
-        )}
-      </div>
-    </div>
-  );
-}
 
 function ThemeToggle() {
   const { pref, setPref } = useTheme();

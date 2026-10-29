@@ -8,7 +8,7 @@ import {
   type Insight,
   type Todo,
 } from "../lib/activity";
-import { fmtAgo, fmtElapsed, fmtTokens, toDate } from "../lib/format";
+import { fmtAgo, fmtElapsed, toDate } from "../lib/format";
 import { useAction } from "../lib/queries";
 import { ROLE_CODES, ROLE_LABELS, roleColor } from "../lib/roles";
 import { href } from "../lib/router";
@@ -273,7 +273,6 @@ export function WorkingCard({
   const started = toDate(run?.started_at)?.getTime();
   const ended = toDate(run?.ended_at)?.getTime();
   const elapsed = started ? (ended ?? now) - started : 0;
-  const tokens = run ? run.input_tokens + run.output_tokens + run.cache_creation_tokens : 0;
   const taskId = task?.id ?? a.current_task ?? run?.task ?? null;
   const planning = live && !insight.todos && elapsed < 20_000;
 
@@ -376,9 +375,6 @@ export function WorkingCard({
       <footer className="mt-auto flex flex-wrap items-center gap-3 border-t border-rule px-4 py-2">
         <span className="mono text-[12px] tabular" title="elapsed">
           ⏱ {elapsed ? fmtElapsed(elapsed) : "-"}
-        </span>
-        <span className="mono text-[12px] text-ink-3 tabular" title="tokens used by this run">
-          {fmtTokens(tokens)} tokens
         </span>
         <span className="ml-auto" />
         {live && (

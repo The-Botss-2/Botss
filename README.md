@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/botss-logo-dark.svg">
+  <img alt="Botss" src="docs/brand/botss-logo-light.svg" width="320">
+</picture>
+
 # Botss
 
 **An AI software team that runs on your own machine, on your own Claude Code subscription.**
@@ -51,7 +56,7 @@ Each team member is a headless **Claude Code** process started by Botss. The rol
 | 🧱 **Real engineering, not vibes** | Contracts before code, test-first tasks, a `verify` command that must pass before a task counts as done, independent code review, QA with bug reports, and project checks after every finished task. |
 | 👀 **Watch them work** | Each agent's card shows what it is doing in plain words ("Running the tests", "Messaging the frontend engineer"), its own plan as a live checklist with a progress bar, the files it touched, and where its task is (building, review, QA, done). |
 | 🔔 **You hear about what matters** | Pop-up and desktop notifications when something needs your approval, an agent asks you a question, a task is blocked, or a task is done. |
-| 💸 **Quota aware** | A daily token budget with a reserve for your own use, concurrency limits, and an automatic pause and resume when Claude Code hits a usage limit. |
+| 💸 **Easy on your usage** | Small changes skip the long process, routine runs (sizing, reviews, QA checks, answers) use a lighter model, agents stop early when stuck, and Botss pauses and resumes around Claude Code usage limits. |
 | ✏️ **Editable team** | Every role's behavior is markdown in [`skills/`](skills/). Change how your PM writes PRDs or how your reviewer judges code, right in the dashboard. |
 
 ---
@@ -123,13 +128,13 @@ botss up                # starts Botss and opens the dashboard for this folder
 
 For a small change, type it on the Idea screen and leave the process on **Auto**: it is built right away. The steps below are the **full** track for a new app. Start small. A good first app takes roughly 8 tasks; [`examples/todo-with-auth.md`](examples/todo-with-auth.md) is one you can paste in.
 
-1. **Set limits first.** In **Settings**, set a daily token budget you are comfortable with and keep *max concurrent agents* at 2 or 3. Leave every approval gate on.
+1. **Keep it small at first.** In **Settings**, keep *max concurrent agents* at 2 or 3 and leave every approval gate on.
 2. **Idea.** Describe the app, add screenshots or links if you have them, choose a stakes level, and submit.
 3. **Questions.** The PM sends one batch of questions, each with a recommended option and why it matters. Answer them, or click **Accept all recommendations**.
 4. **PRD.** Read it in **Documents**. Click **Approve**, or **Request changes** with comments, and the PM revises it.
 5. **Design.** Each visual direction comes with a live preview of your main screen, so you choose from something you can see. The designer then produces tokens and a mockup of every screen. **Review the mockups at desktop and mobile sizes and approve the design** (or ask for changes) before any architecture or code is written.
 6. **Architecture.** Review the tech lead's architecture and API contract, then approve it.
-7. **Plan and team.** In **Team builder**, see every task, the dependency graph, the critical path, and an estimate of tokens and time. Pick how many agents per role (more agents than the plan has parallel lanes just wait), then click **Approve plan & start build**.
+7. **Plan and team.** In **Team builder**, see every task, the dependency graph, the critical path, and a rough time estimate. Pick how many agents per role (more agents than the plan has parallel lanes just wait), then click **Approve plan & start build**.
 8. **Watch the build.** **Agents** shows the team at work: each agent's status in plain words, its own plan as a checklist with a progress bar, the files it touched, and its task's stage. Open **Details** on a card for the full live transcript (reasoning, each edit, each command and its output). On the **Live board**, tasks move from *To do* to *Done*. The **Team feed** shows agents messaging each other, reviews, and blocked actions. Notifications pop up when an agent asks you something, a document needs your approval, a task is blocked, or a task is done (turn on desktop notifications from the bell).
    * **Changed your mind?** Click **Request a change** in the header at any point after the PRD is approved. The PM updates the PRD (you approve), the tech lead updates the plan (you approve), and new tasks join the build. Finished work is kept unless your change says otherwise.
 9. **Release.** QA runs the full suite on the finished project and Botss writes a release summary. Approve it. Everything is already in your folder.
@@ -187,13 +192,12 @@ More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code
 | **Design** | Compare live previews of each direction, browse tokens, review every screen mockup at desktop and mobile sizes, approve the design |
 | **Team builder** | Task graph, critical path, estimate; choose agents per role and models; start the build |
 | **Live board** | Kanban of every task; open one for its file, timeline, handoff, review, QA report, diff, and verify output |
-| **Agents** | Watch agents work in real time: a live transcript per agent (its reasoning, each edit with an inline diff, each command and its output), elapsed time, tokens; pause or stop one agent |
+| **Agents** | Watch agents work in real time: a live transcript per agent (its reasoning, each edit with an inline diff, each command and its output), elapsed time; pause or stop one agent |
 | **Team feed** | Everything the team does, as it happens; filter by role or task |
 | **Preview** | Run the merged app (Docker) and use it in the dashboard |
-| **Usage** | Tokens today and over 7 days, by role and task; budget and usage-limit events |
 | **Settings** | Budgets, concurrency, gates, models per role, permission mode, check commands, and the **skills editor** |
 
-The header always shows the phase, your quota, open questions, **Pause/Resume**, and the red **Kill switch**.
+The header always shows the phase, open questions, notifications, **Pause/Resume**, and the red **Kill switch**.
 
 <details>
 <summary>More screenshots</summary>
@@ -213,9 +217,6 @@ The header always shows the phase, your quota, open questions, **Pause/Resume**,
 **Documents**
 ![PRD](docs/screenshots/docs-prd.png)
 
-**Usage**
-![Usage](docs/screenshots/usage.png)
-
 </details>
 
 ---
@@ -228,7 +229,7 @@ The header always shows the phase, your quota, open questions, **Pause/Resume**,
 | `botss init [folder]` | Make a folder a Botss project (adds the hidden `.botss/` folder only) |
 | `botss doctor` | Check prerequisites and print fixes. `--login` also confirms Claude Code is logged in (asks first; sends one tiny prompt) |
 | `botss up [--port N] [--no-open]` | Start the server and dashboard on `127.0.0.1` (default port 4800) |
-| `botss status` | Phase, task counts, quota, and working agents for the current project |
+| `botss status` | Phase, task counts, and working agents for the current project |
 | `botss pause` / `botss resume` | Stop / restart starting new agent runs |
 | `botss stop` | **Kill switch:** stop every agent process immediately |
 | `botss logs <agent\|task> [-f]` | Recent events for an agent (`backend-1`) or a task (`T012`) |
@@ -251,11 +252,12 @@ Everything else in the shell is allowed, like in Claude Code, so agents can inst
 
 **What it costs.** Every agent run uses your Claude Code subscription (or API billing, if you set that up in Claude Code). You control it with:
 
-* **Daily budget and reserve:** Botss stops starting new runs once it has used `(100 − reserve)%` of your daily token budget. The default reserve is 20%, so you always keep some for yourself.
+* **Just enough process:** small changes go straight to an engineer; only big requests get questions, PRD, design, and architecture.
+* **Lighter model for routine runs:** sizing a request, answering teammates, code review, and QA checks use Sonnet unless you choose a model per role in Settings.
 * **Concurrency:** a global cap (default 3) and per-role counts from the team builder.
 * **Usage limits:** when Claude Code reports a limit, Botss pauses, shows the reset time, and resumes on its own afterwards (this can be turned off).
 * **Runaway guards:** turn limits per role, a time limit per run, and tasks that fail 3 times in a row are blocked for you to look at.
-* **Estimate before you build:** the team builder shows expected tokens per role before you start.
+* **Optional daily cap:** Settings has an optional daily token cap; it is off by default.
 
 ---
 
@@ -266,7 +268,7 @@ Most settings live in the dashboard (**Settings**) and are stored per project:
 | Setting | Default | |
 |---|---|---|
 | Max concurrent agents | 3 | Total agents running at once |
-| Daily token budget / reserve | 10M / 20% | Botss uses at most 80% of the budget |
+| Daily token cap | off | Optional; Botss stops starting runs at the cap |
 | Approval gates | all on | PRD, design direction, screen designs, architecture, plan, release; each can auto-approve |
 | Models per role | Claude Code default | For example a stronger model for the tech lead and a faster one for the reviewer |
 | Max turns per role, run timeout | 80 turns / 45 min | Runaway guards |
@@ -331,7 +333,7 @@ Not yet. The runner is behind an interface so other CLIs can be added later.
 | Port 4800 is in use | `botss up --port 4801` |
 | Backend tasks fail with "uv: command not found" | Install [uv](https://docs.astral.sh/uv/) and restart `botss up` |
 | Agents can't start databases | Start Docker Desktop (or the Docker daemon) and check `docker compose version` |
-| Botss paused itself | Check the header: a usage limit (resumes on its own), the daily budget (raise it in Settings), or the kill switch (`botss resume`) |
+| Botss paused itself | Check the header: a Claude Code usage limit (resumes on its own), the optional daily cap in Settings, or the kill switch (`botss resume`) |
 | `pnpm: command not found` | Use `corepack pnpm …`, or run `corepack enable` once |
 
 ---

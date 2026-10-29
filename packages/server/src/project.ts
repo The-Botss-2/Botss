@@ -5,6 +5,7 @@ import path from "node:path";
 import type { EventBus } from "./bus.ts";
 import { Commands } from "./commands.ts";
 import { ensureWorktree, git, INTEGRATION_BRANCH } from "./git.ts";
+import { isLegacyIsolated, moveToDirect } from "./migrate.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { CLI_ENTRY, NODE_FLAGS, ProjectPaths, ROLES_SOURCE, SKILLS_SOURCE } from "./paths.ts";
 import { ClaudeRunner, type AgentRunner } from "./runner.ts";
@@ -56,6 +57,11 @@ export class Project {
 
   static async open(root: string, ctx: ProjectContext): Promise<Project> {
     const p = new Project(root, ctx);
+    // Projects from before direct mode move to the owner's folder (no worktrees) the first time they open.
+    if (isLegacyIsolated(p)) {
+      const r = await moveToDirect(p).catch((e: Error) => ({ ok: false, message: e.message }));
+      if (!r.ok) p.svc.alert(r.message);
+    }
     if (!p.direct) {
       // Isolated mode works through git: the project must be the root of its own repository, or projects in
       // the same parent repository would share branches.
@@ -104,6 +110,9 @@ export class Project {
       }
     }
     if (JSON.stringify(raw.allowed_tools) === JSON.stringify(LEGACY_ALLOWED_TOOLS)) patch.allowed_tools = DEFAULT_ALLOWED_TOOLS;
+    // The old default 10M-token daily cap paused agents with nothing on screen to explain it; now no Botss cap by
+    // default (Claude Code's own limits still pause and resume Botss).
+    if (raw.daily_token_budget === 10_000_000) patch.daily_token_budget = 0;
     if (Object.keys(patch).length) this.svc.updateSettings(patch, "botss");
   }
 

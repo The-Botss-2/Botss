@@ -179,8 +179,12 @@ export class PreviewManager {
     this.child = null;
     if (child?.pid) await killTree(child.pid);
     if (this.server) {
-      await new Promise<void>((r) => this.server!.close(() => r()));
+      const server = this.server;
       this.server = null;
+      // A browser (the dashboard's preview frame) can hold keep-alive connections open; close them so stopping
+      // never waits on a page someone left open.
+      server.closeAllConnections();
+      await Promise.race([new Promise<void>((r) => server.close(() => r())), new Promise((r) => setTimeout(r, 3000))]);
     }
     this.onChange();
   }

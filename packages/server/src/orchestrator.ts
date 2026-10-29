@@ -44,6 +44,29 @@ import { hashToken } from "./tokens.ts";
 // The deterministic orchestrator. Plain code decides scheduling, permissions, merging, and phase flow.
 
 const PLANNING_ROLES: Role[] = ["pm", "designer", "tech-lead"];
+
+/**
+ * Token thrift: short, routine runs use Sonnet (cheaper on the owner's usage) unless the owner picked a model for
+ * the role in Settings; the heavy work (architecture, design, building) keeps Claude Code's default model.
+ */
+const MODE_MODEL: Record<string, string> = {
+  triage: "sonnet",
+  answer: "sonnet",
+  review: "sonnet",
+  verify: "sonnet",
+  survey: "sonnet",
+  discover: "sonnet",
+};
+
+/** Turn limits by mode, so a confused run stops early. The role setting and default_max_turns still cap them. */
+const MODE_MAX_TURNS: Record<string, number> = {
+  triage: 30,
+  answer: 20,
+  review: 40,
+  verify: 50,
+  discover: 25,
+  survey: 40,
+};
 const SCRATCH = [".botss/handoffs/**", ".botss/reviews/**", ".botss/screens/**"];
 
 interface ActiveRun {
@@ -476,7 +499,9 @@ export class Orchestrator {
     ) {
       this.svc.updateTask(o.task.id, { session_id: sessionId });
     }
-    const maxTurns = settings.max_turns[o.role] ?? settings.default_max_turns;
+    // Routine runs get a cheaper model and a tighter turn limit unless the owner set one for the role.
+    const maxTurns = settings.max_turns[o.role] ?? Math.min(MODE_MAX_TURNS[o.mode] ?? settings.default_max_turns, settings.default_max_turns);
+    const model = settings.models[o.role] || MODE_MODEL[o.mode];
     const { pid } = this.p.runner.start(
       {
         runId,
@@ -489,7 +514,7 @@ export class Orchestrator {
         settingsFile,
         streamFile: path.join(dir, "stream.jsonl"),
         maxTurns,
-        model: settings.models[o.role],
+        model,
         permissionMode: settings.permission_mode,
         allowedTools: settings.allowed_tools,
         disallowedTools: settings.disallowed_tools,
@@ -1781,15 +1806,22 @@ export class Orchestrator {
       this.svc.emit("preview.changed", "Preview stopped", { action }, { actor: "human" });
       return this.previewer.get();
     }
+    if (this.stopped) return this.previewer.get();
     const agent = await this.integrationAgent();
     const env = this.envFor(agent, {});
     const plan = await this.previewPlan();
-    const status = await this.previewer.start(
+    const started = this.previewer.start(
       this.p.sharedDir(),
       plan ?? { command: null, url: null, source: "nothing found" },
       env,
       Number(env.FRONTEND_PORT),
     );
+    const status = await started;
+    // Botss shut down while the app was starting: do not leave it running.
+    if (this.stopped || this.closed) {
+      await this.previewer.stop();
+      return this.previewer.get();
+    }
     this.svc.emit(
       "preview.changed",
       status.error ? `Preview could not start: ${status.error}` : `Preview ${status.url ? `running at ${status.url}` : "starting"}`,

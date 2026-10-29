@@ -537,10 +537,6 @@ test("screenshot tour", async ({ page }) => {
   await shot(page, "team-builder");
   svc.setPhase("build");
 
-  await goto(page, h, "usage");
-  await expect(page.getByTestId("usage-today")).toBeVisible();
-  await shot(page, "usage");
-
   await goto(page, h, "preview");
   await shot(page, "preview");
 
@@ -610,5 +606,5 @@ test("screenshot tour", async ({ page }) => {
   await shot(page, "projects");
 
   const files = fs.readdirSync(OUT).filter((f) => f.endsWith(".png"));
-  expect(files.length).toBeGreaterThanOrEqual(27);
+  expect(files.length).toBeGreaterThanOrEqual(26);
 });
