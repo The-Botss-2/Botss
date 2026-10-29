@@ -10,3 +10,4 @@ export * from "./phases.ts";
 export * from "./quota.ts";
 export * from "./db.ts";
 export * from "./ids.ts";
+export * from "./lessons.ts";

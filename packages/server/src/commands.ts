@@ -384,6 +384,18 @@ export class Commands {
     return { text: `${d} recorded`, data: { id: d, markdown: md, path: `.botss/docs/decisions/${d}.md` } };
   }
 
+  /** Record a lesson for the project memory: one rule that stops the same mistake next time. */
+  lesson(id: Identity, text: string, roles: string[], paths: string[]): CmdResult {
+    this.must(id, "decision");
+    const a = this.actor(id);
+    const task = this.runTask(id);
+    const badRole = roles.find((r) => !isRole(r));
+    if (badRole) throw new ServiceError(`unknown role "${badRole}"`, 2);
+    const l = this.svc.addLesson({ text, roles, paths, source: task ? `${task} (${a.agent})` : a.agent, by: a.agent });
+    this.p.writeMemoryFile();
+    return { text: `Lesson ${l.id} saved. Teammates working on matching files will see it.`, data: { id: l.id } };
+  }
+
   decisionList(id: Identity): CmdResult {
     this.must(id, "read");
     const rows = this.svc.decisions();

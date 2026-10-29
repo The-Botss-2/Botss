@@ -45,7 +45,7 @@ function readPlanDir(dir: string): { file: string; source: string }[] {
     .map((f) => ({ file: path.join(dir, f).replace(/\\/g, "/"), source: fs.readFileSync(path.join(d, f), "utf8") }));
 }
 
-export const AGENT_COMMANDS = new Set(["whoami", "task", "doc", "progress", "msg", "ask", "inbox", "reply", "decision", "plan", "review", "qa", "bug"]);
+export const AGENT_COMMANDS = new Set(["whoami", "task", "doc", "progress", "msg", "ask", "inbox", "reply", "decision", "lesson", "plan", "review", "qa", "bug"]);
 
 export async function runAgentCommand(p: Parsed): Promise<{ text: string; data: unknown; exit: number; ok: boolean }> {
   const [group, sub, ...rest] = p.positional;
@@ -77,6 +77,12 @@ export async function runAgentCommand(p: Parsed): Promise<{ text: string; data: 
       return cmd(conn, "inbox", { all: Boolean(p.flags.all) });
     case "reply":
       return cmd(conn, "reply", { id: need(sub, 'botss reply M-0042 "<text>"'), body: need(rest.join(" "), 'botss reply M-0042 "<text>"') });
+    case "lesson":
+      return cmd(conn, "lesson", {
+        text: need([sub, ...rest].filter(Boolean).join(" "), 'botss lesson "<one rule>" [--roles frontend,qa] [--paths "src/components/**"]'),
+        roles: (flag(p, "roles") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+        paths: (flag(p, "paths") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      });
     case "decision": {
       if (sub === "list") return cmd(conn, "decision.list", {});
       if (sub === "show") return cmd(conn, "decision.show", { id: need(rest[0], "botss decision show D-007") });

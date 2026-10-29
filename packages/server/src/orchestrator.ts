@@ -2,6 +2,7 @@ import {
   budgetTokens,
   emptyUsage,
   formatId,
+  lessonsFor,
   matchesAny,
   PHASE_GATE,
   quotaCheck,
@@ -68,6 +69,19 @@ const MODE_MAX_TURNS: Record<string, number> = {
   survey: 40,
 };
 const SCRATCH = [".botss/handoffs/**", ".botss/reviews/**", ".botss/screens/**"];
+
+export interface NeedsYouItem {
+  kind: "question" | "approval" | "blocked" | "paused" | "alert" | "team-paused";
+  id: string;
+  title: string;
+  detail: string;
+  task?: string | null;
+  doc?: string;
+  screen: string;
+  at: string;
+  /** One-click action the dashboard can offer right on the item. */
+  action?: "unblock" | "release" | "dismiss" | "resume";
+}
 
 interface ActiveRun {
   runId: string;
@@ -337,7 +351,18 @@ export class Orchestrator {
     const inbox = this.svc.inbox(agent, role).slice(-20);
     const prompt = resume
       ? resume.prompt
-      : buildRunPrompt({ mode, stage, task: t, inbox, extra, handoff, diffStat: stat, agent, roleTitle: roleTitle(this.p.roles, role) });
+      : buildRunPrompt({
+          mode,
+          stage,
+          task: t,
+          inbox,
+          extra,
+          handoff,
+          diffStat: stat,
+          agent,
+          roleTitle: roleTitle(this.p.roles, role),
+          lessons: lessonsFor(this.svc.lessons(), role, [...t.owns, ...t.may_touch]).map((l) => l.text),
+        });
     const writable = this.writableFor(t, role, stage);
     const runId = await this.launch({
       agent,
@@ -871,11 +896,16 @@ export class Orchestrator {
         this.captureChecksFrom(this.svc.doc("codebase")?.content ?? "", "codebase summary");
         this.createPlanningTask("pm", "discover");
         break;
-      case "system":
-        this.createPlanningTask("designer", "screens", {
-          resume: { session, prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }) },
-        });
+      case "system": {
+        // The system run normally submits the screens too; only continue if it stopped before that.
+        const d = this.svc.doc("design");
+        if (!d || !d.versions.some((v: any) => v.created_at >= t.created_at)) {
+          this.createPlanningTask("designer", "screens", {
+            resume: { session, prompt: buildRunPrompt({ mode: "screens", stage: "implement", task: null, inbox: [] }) },
+          });
+        }
         break;
+      }
       case "replan": {
         // Approved while the replan was still merging: release the new tasks now.
         const ch = this.changes().find((c) => c.id === t.meta.changeId);
@@ -1174,6 +1204,57 @@ export class Orchestrator {
     void this.tick();
   }
 
+  // ------------------------------------------------------------------------------------- needs you
+
+  /** Everything waiting on the owner, in one list: questions, approvals, blocked or paused work, alerts. */
+  needsYou(): NeedsYouItem[] {
+    const items: NeedsYouItem[] = [];
+    const st = this.svc.state;
+    const openQs = this.svc.questions("open").filter((q) => q.to_addr === "@human");
+    for (const q of openQs) {
+      items.push({
+        kind: "question",
+        id: q.id,
+        title: q.kind === "batch" ? `${q.from_agent} needs your decisions` : `${q.from_agent} asks you`,
+        detail: String(q.body).slice(0, 300),
+        task: q.task ?? null,
+        screen: "questions",
+        at: q.created_at,
+      });
+    }
+    const what: Record<string, string> = { prd: "the PRD", design: "the screen designs", architecture: "the architecture", plan: "the plan", release: "the release" };
+    const gate = PHASE_GATE[this.svc.phase];
+    const ch = this.activeChange();
+    const waiting = new Set<string>();
+    if (gate && gate !== "design_direction" && this.svc.doc(gate)?.status === "submitted") waiting.add(gate);
+    if (ch?.status === "prd_review") waiting.add("prd");
+    if (ch?.status === "plan_review") waiting.add("plan");
+    for (const g of waiting) {
+      const d = this.svc.doc(g)!;
+      items.push({
+        kind: "approval",
+        id: `gate:${g}`,
+        title: `Review ${what[g] ?? g}`,
+        detail: ch && (g === "prd" || g === "plan") && (ch.status === "prd_review" || ch.status === "plan_review") ? `Updated for ${ch.id}: ${ch.text.slice(0, 160)}` : `Version ${d.version} is waiting for your approval.`,
+        doc: g,
+        screen: g === "design" ? "design" : g === "plan" ? "team" : "docs",
+        at: d.updated_at,
+      });
+    }
+    const askedHuman = new Set(openQs.map((q) => q.task).filter(Boolean));
+    for (const t of this.svc.tasks()) {
+      if (t.status === "blocked" && !askedHuman.has(t.id) && t.hold !== "integrating" && t.hold !== "cancelled") {
+        items.push({ kind: "blocked", id: `task:${t.id}`, title: `${t.id} is blocked`, detail: t.blocked_reason ?? "", task: t.id, screen: "board", at: t.updated_at, action: "unblock" });
+      } else if (t.hold === "paused" && t.status !== "done") {
+        items.push({ kind: "paused", id: `hold:${t.id}`, title: `${t.id} is paused`, detail: "You paused this agent's task.", task: t.id, screen: "board", at: t.updated_at, action: "release" });
+      }
+    }
+    for (const a of st.alerts ?? []) items.push({ kind: "alert", id: `alert:${a.id}`, title: a.text, detail: "", task: a.task ?? null, screen: "board", at: a.ts, action: "dismiss" });
+    if (st.paused) items.push({ kind: "team-paused", id: "paused", title: "The team is paused", detail: st.pauseReason ?? "", screen: "agents", at: new Date().toISOString(), action: "resume" });
+    const order: Record<string, number> = { approval: 0, question: 1, blocked: 2, "team-paused": 3, paused: 4, alert: 5 };
+    return items.sort((a, b) => order[a.kind]! - order[b.kind]! || String(b.at).localeCompare(String(a.at)));
+  }
+
   // ------------------------------------------------------------------------------- change requests
 
   changes(): ChangeRequest[] {
@@ -1270,7 +1351,8 @@ export class Orchestrator {
         this.createPlanningTask("designer", "system", {
           resume: {
             session: q.session_id ?? t.session_id ?? crypto.randomUUID(),
-            prompt: `The owner picked a direction (${q.id}):\n\n${answerText}\n\nNow switch to mode system: build the tokens, theme, and DESIGN.md for this direction, and commit.`,
+            // One run for the design system and the screens: no second process to start and no context to reload.
+            prompt: `The owner picked a direction (${q.id}):\n\n${answerText}\n\nNow, in this same run: (1) build the tokens (\`.botss/docs/contracts/design-tokens.json\`), the Tailwind v4 theme, and \`.botss/docs/design/DESIGN.md\` for this direction; (2) write the screen specs and mockups as in mode screens (HTML mockups for the 3 or 4 key screens only, written specs for the rest); (3) \`botss doc submit design\`. The owner reviews the screens before the architecture starts.`,
           },
         });
       } else if (q.session_id) {

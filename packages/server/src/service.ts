@@ -1,4 +1,6 @@
 import {
+  MAX_LESSON_CHARS,
+  type Lesson,
   canTransition,
   defaultSettings,
   formatId,
@@ -664,6 +666,62 @@ export class ProjectService {
   decision(id: string): Row | undefined {
     const d = this.db.get("SELECT * FROM decisions WHERE id = ?", id);
     return d ? { ...d, affects: parseJ(d.affects, []) } : undefined;
+  }
+
+  // -------------------------------------------------------------------------------- learning memory
+
+  lessons(): Lesson[] {
+    return this.db.all("SELECT * FROM lessons ORDER BY pinned DESC, id DESC").map((r) => ({
+      ...(r as any),
+      roles: parseJ(r.roles, []),
+      paths: parseJ(r.paths, []),
+      pinned: Boolean(r.pinned),
+    }));
+  }
+
+  addLesson(l: { text: string; roles?: string[]; paths?: string[]; source?: string | null; by: string; pinned?: boolean }): Lesson {
+    const text = l.text.trim().replace(/\s+/g, " ");
+    if (!text) throw new ServiceError("the lesson is empty", 2);
+    if (text.length > MAX_LESSON_CHARS) throw new ServiceError(`keep a lesson under ${MAX_LESSON_CHARS} characters (it is ${text.length}); one rule per lesson`, 2);
+    // Same lesson twice: keep one.
+    const dup = this.lessons().find((x) => x.text.toLowerCase() === text.toLowerCase());
+    if (dup) return dup;
+    const id = this.db.run(
+      "INSERT INTO lessons (text, roles, paths, source, by_agent, pinned) VALUES (?, ?, ?, ?, ?, ?)",
+      text,
+      J(l.roles ?? []),
+      J(l.paths ?? []),
+      l.source ?? null,
+      l.by,
+      l.pinned ? 1 : 0,
+    ).lastInsertRowid;
+    this.emit("memory.added", `Lesson learned: ${text.slice(0, 140)}`, { id, source: l.source ?? null }, { actor: l.by });
+    return this.lessons().find((x) => x.id === id)!;
+  }
+
+  updateLesson(id: number, patch: { text?: string; roles?: string[]; paths?: string[]; pinned?: boolean }): void {
+    if (patch.text !== undefined && patch.text.trim().length > MAX_LESSON_CHARS) throw new ServiceError(`keep a lesson under ${MAX_LESSON_CHARS} characters`, 2);
+    const sets: string[] = [];
+    const params: any[] = [];
+    const fields: [string, unknown][] = [
+      ["text", patch.text?.trim()],
+      ["roles", patch.roles && J(patch.roles)],
+      ["paths", patch.paths && J(patch.paths)],
+      ["pinned", patch.pinned === undefined ? undefined : patch.pinned ? 1 : 0],
+    ];
+    for (const [k, v] of fields) {
+      if (v === undefined) continue;
+      sets.push(`${k} = ?`);
+      params.push(v);
+    }
+    if (!sets.length) return;
+    if (this.db.run(`UPDATE lessons SET ${sets.join(", ")} WHERE id = ?`, ...params, id).changes === 0) throw new ServiceError(`no lesson ${id}`, 404);
+    this.emit("memory.updated", `Lesson ${id} updated`, { id }, { actor: "human" });
+  }
+
+  deleteLesson(id: number): void {
+    this.db.run("DELETE FROM lessons WHERE id = ?", id);
+    this.emit("memory.deleted", `Lesson ${id} removed`, { id }, { actor: "human" });
   }
 
   // ---------------------------------------------------------------------- handoffs, reviews, QA, bugs

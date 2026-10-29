@@ -1,3 +1,5 @@
+import { MemoryScreen } from "./screens/Memory";
+import { NeedsYouScreen } from "./screens/NeedsYou";
 import { useEffect, useState } from "react";
 import { Shell, defaultScreen } from "./components/Shell";
 import { Toaster } from "./components/ui";
@@ -86,6 +88,10 @@ function Screen({ pid, screen, rest }: { pid: string; screen: string; rest: stri
       return <FeedScreen pid={pid} />;
     case "preview":
       return <PreviewScreen pid={pid} />;
+    case "needs":
+      return <NeedsYouScreen pid={pid} />;
+    case "memory":
+      return <MemoryScreen pid={pid} />;
     case "usage":
       return <UsageScreen pid={pid} />;
     case "settings":

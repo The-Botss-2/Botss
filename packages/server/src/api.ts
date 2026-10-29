@@ -235,6 +235,9 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
         case "decision":
           r = c.decision(id, s("title"), s("why"), Array.isArray(b.affects) ? b.affects : []);
           break;
+        case "lesson":
+          r = c.lesson(id, s("text"), Array.isArray(b.roles) ? b.roles : [], Array.isArray(b.paths) ? b.paths : []);
+          break;
         case "decision.list":
           r = c.decisionList(id);
           break;
@@ -366,6 +369,7 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
 
   // ------------------------------------------------------------------------- change requests
   app.get("/api/projects/:pid/changes", wrap((req) => (human(req), project(req).orch.changes())));
+  app.get("/api/projects/:pid/needs-you", wrap((req) => (human(req), project(req).orch.needsYou())));
   app.post(
     "/api/projects/:pid/changes",
     wrap(async (req) => {
@@ -538,6 +542,47 @@ export function registerApi(app: FastifyInstance, srv: BotssServer): void {
     }),
   );
   app.get("/api/projects/:pid/decisions", wrap((req) => (human(req), project(req).svc.decisions())));
+
+  // ------------------------------------------------------------------------------ learning memory
+  const lessonBody = z.object({
+    text: z.string().min(1).max(300).optional(),
+    roles: z.array(z.string()).max(9).optional(),
+    paths: z.array(z.string().max(200)).max(20).optional(),
+    pinned: z.boolean().optional(),
+  });
+  app.get("/api/projects/:pid/lessons", wrap((req) => (human(req), project(req).svc.lessons())));
+  app.post(
+    "/api/projects/:pid/lessons",
+    wrap((req) => {
+      human(req);
+      const p = project(req);
+      const b = lessonBody.parse(req.body);
+      if (!b.text) throw new ServiceError("text is required", 2);
+      const l = p.svc.addLesson({ text: b.text, roles: b.roles, paths: b.paths, pinned: b.pinned, source: "you", by: "human" });
+      p.writeMemoryFile();
+      return l;
+    }),
+  );
+  app.patch(
+    "/api/projects/:pid/lessons/:lid",
+    wrap((req) => {
+      human(req);
+      const p = project(req);
+      p.svc.updateLesson(Number((req.params as { lid: string }).lid), lessonBody.parse(req.body));
+      p.writeMemoryFile();
+      return { ok: true };
+    }),
+  );
+  app.delete(
+    "/api/projects/:pid/lessons/:lid",
+    wrap((req) => {
+      human(req);
+      const p = project(req);
+      p.svc.deleteLesson(Number((req.params as { lid: string }).lid));
+      p.writeMemoryFile();
+      return { ok: true };
+    }),
+  );
 
   app.get(
     "/api/projects/:pid/agents",

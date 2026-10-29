@@ -95,7 +95,8 @@ export const settingsSchema = z.object({
   team: z.record(z.string(), z.number().int().min(0)).default({}),
   /** Check commands run on the integration branch after each merge (from T000/T001 handoffs). */
   checks: z.array(z.string()).default([]),
-  qa_per_task: z.boolean().default(true),
+  /** Off by default: each task gets engineer + reviewer, and QA tests the whole app once at release (much faster). */
+  qa_per_task: z.boolean().default(false),
   /** How to run the app for the Preview screen (empty: from the tech lead's notes or the project files). */
   preview_command: z.string().default(""),
   preview_url: z.string().default(""),

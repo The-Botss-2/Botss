@@ -115,7 +115,7 @@ export async function startHarness(scenario: Record<string, unknown>, opts: { na
     const server = new BotssServer({ port: 0, writeInfo: false, runnerFactory: () => new ClaudeRunner(FAKE_CLAUDE), autoStart: false });
     await server.start();
     const project = await server.openProject(root);
-    project.svc.updateSettings({ scheduler_interval_ms: 150, port_base: 32000 + Math.floor(Math.random() * 200) * 50, verify_timeout_minutes: 1, existing: false, ...(opts.settings ?? {}) } as any);
+    project.svc.updateSettings({ scheduler_interval_ms: 150, port_base: 32000 + Math.floor(Math.random() * 200) * 50, verify_timeout_minutes: 1, existing: false, qa_per_task: true, ...(opts.settings ?? {}) } as any);
     project.start();
     h.server = server;
     h.project = project;

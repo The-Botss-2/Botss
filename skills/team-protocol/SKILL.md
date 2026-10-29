@@ -93,6 +93,10 @@ Bad message: `botss msg @frontend "Hi! I'm working on the orders API now, will l
 * Read your inbox once at the start of a run, not repeatedly. Do not reply just to acknowledge.
 * Decisions and contract changes go in files (`botss decision`, the contract), so later runs read them once instead of rereading message threads.
 
+## 4b. Learn once
+
+Your prompt may include **Lessons from this project**: rules teammates learned the hard way. Follow them. When you find a mistake that is likely to happen again (you hit it, a reviewer flagged it, a test caught it), record it in one line with `botss lesson "<rule>" --paths "<glob>"`. Reviewers and QA: when you request changes for something that is a pattern rather than a one-off, record the lesson too. One rule per lesson; no task-specific details.
+
 ## 4a. Build only what was asked
 
 The owner pays for every line, and decides what the product is. Scope creep is the most expensive mistake a team of agents can make, because each extra makes more tasks, tests, reviews, and merges.

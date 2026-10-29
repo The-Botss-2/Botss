@@ -1,3 +1,4 @@
+import { NeedsYouList } from "./NeedsYou";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { DiffView } from "../components/Diff";
 import { Markdown } from "../components/Markdown";
@@ -47,6 +48,9 @@ export function BoardScreen({ pid, taskId }: { pid: string; taskId: string | nul
       >
         {tasks.data && <BoardCounts tasks={tasks.data.filter((t) => BOARD_KINDS.has(t.kind))} />}
       </PageHeader>
+      <div className="mb-4" data-testid="board-needs-you">
+        <NeedsYouList pid={pid} compact />
+      </div>
       <Loadable q={tasks} rows={6}>
         {(all) => {
           const board = all.filter((t) => BOARD_KINDS.has(t.kind));

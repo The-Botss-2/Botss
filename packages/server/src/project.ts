@@ -1,4 +1,4 @@
-import { Db, DEFAULT_ALLOWED_TOOLS, LEGACY_ALLOWED_TOOLS, parseRolesYaml, type RolesFile } from "@botss/core";
+import { Db, DEFAULT_ALLOWED_TOOLS, LEGACY_ALLOWED_TOOLS, lessonsMarkdown, parseRolesYaml, type RolesFile } from "@botss/core";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -114,6 +114,15 @@ export class Project {
     // default (Claude Code's own limits still pause and resume Botss).
     if (raw.daily_token_budget === 10_000_000) patch.daily_token_budget = 0;
     if (Object.keys(patch).length) this.svc.updateSettings(patch, "botss");
+  }
+
+  /** `.botss/memory.md`: a readable copy of the learning memory (the database is the source of truth). */
+  writeMemoryFile(): void {
+    try {
+      fs.writeFileSync(path.join(this.paths.botss, "memory.md"), lessonsMarkdown(this.svc.lessons()));
+    } catch {
+      /* the copy is a convenience */
+    }
   }
 
   serverUrl(): string {

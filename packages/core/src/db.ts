@@ -259,6 +259,22 @@ ALTER TABLE runs ADD COLUMN activity TEXT;
 ALTER TABLE agents ADD COLUMN activity TEXT;
 `,
   },
+  {
+    id: 3,
+    name: "learning memory",
+    sql: `
+CREATE TABLE lessons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  roles TEXT NOT NULL DEFAULT '[]',
+  paths TEXT NOT NULL DEFAULT '[]',
+  source TEXT,
+  by_agent TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+`,
+  },
 ];
 
 export type Row = Record<string, any>;

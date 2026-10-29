@@ -158,6 +158,7 @@ For a small change, type it on the Idea screen and leave the process on **Auto**
 * **Plain code makes the decisions.** Scheduling, permissions, and plan validation are deterministic code, not an LLM. A task is "done" only when its `verify` command passes, review approves it, and QA passes it. If the project's checks fail afterwards, the tech lead gets a repair task.
 * **Everything is visible.** Each agent's actions, messages, decisions, reviews, and raw output are stored and streamed to the dashboard, and survive a page reload.
 * **Only what you asked for.** Every role follows a scope rule: build exactly what you said and what you approved. Anything an agent thinks is missing becomes a question or a "Later" note you can see, never a silent extra. Reviewers flag unrequested additions.
+* **The team learns.** When an agent, a reviewer, or you spot a mistake that could happen again, it becomes a one-line lesson in the project's memory. Every later run sees the lessons that match its role and files, so mistakes are not repeated (and you don't pay for fixing them twice). Edit the memory on the **Memory** screen.
 * **Token-thrifty teamwork.** Each role's system prompt is identical across runs so Claude Code's prompt cache is reused. Messages are short and capped (details go in files), questions to the same role are answered in one batched run, inboxes are trimmed, and interrupted agents resume their own sessions instead of starting over.
 
 ### Existing projects
@@ -187,6 +188,7 @@ More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code
 | Screen | What you do there |
 |---|---|
 | **Idea** | Describe the app, add attachments and links |
+| **Needs you** | Everything waiting on you in one list: questions, approvals, blocked or paused tasks, alerts, with one-click actions (also shown at the top of the board) |
 | **Questions** | Answer batched questions (with recommendations) and anything an agent asks `@human`; see alerts |
 | **Documents** | Read the PRD, architecture, contracts (OpenAPI rendered), decisions, and plan; compare versions, comment, approve |
 | **Design** | Compare live previews of each direction, browse tokens, review every screen mockup at desktop and mobile sizes, approve the design |
@@ -195,7 +197,8 @@ More detail: [Architecture](docs/architecture.md) · [How Botss uses Claude Code
 | **Agents** | Watch agents work in real time: a live transcript per agent (its reasoning, each edit with an inline diff, each command and its output), elapsed time; pause or stop one agent |
 | **Team feed** | Everything the team does, as it happens; filter by role or task |
 | **Preview** | Run the merged app (Docker) and use it in the dashboard |
-| **Settings** | Budgets, concurrency, gates, models per role, permission mode, check commands, and the **skills editor** |
+| **Memory** | The lessons the team learned on this project; add, pin, or remove them |
+| **Settings** | Concurrency, gates, QA per task, models per role, preview command, permission mode, check commands, and the **skills editor** |
 
 The header always shows the phase, open questions, notifications, **Pause/Resume**, and the red **Kill switch**.
 

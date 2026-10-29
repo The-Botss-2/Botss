@@ -87,7 +87,7 @@ export const MODE_GUIDE: Record<string, string> = {
   system:
     "Mode: system. Build the chosen direction into `.botss/docs/contracts/design-tokens.json`, the Tailwind v4 theme, and `.botss/docs/design/DESIGN.md`. Commit. Then finish (screens come in the next run).",
   screens:
-    "Mode: screens. Write one spec and one HTML mockup per screen the PRD lists under `.botss/docs/design/screens/` (mockups as `<screen>.html`, self-contained, inline CSS, no external scripts). Design only the screens and states the PRD needs. Commit, then `botss doc submit design` and finish. The owner reviews the screens before the architecture starts; if comments are included below, address every one.",
+    "Mode: screens. Write a short spec for each screen the PRD lists, and an HTML mockup (`<screen>.html`, self-contained, inline CSS, no external scripts) for the 3 or 4 key screens only, all under `.botss/docs/design/screens/`. Mockups are slow to write: the rest follow from the design system and the specs. Design only the screens and states the PRD needs. Commit, then `botss doc submit design` and finish. The owner reviews the screens before the architecture starts; if comments are included below, address every one.",
   architect:
     "Mode: architect. Write `.botss/docs/architecture.md` and the contracts in `.botss/docs/contracts/` from the approved PRD and design (and `.botss/docs/codebase.md` if it exists: extend the existing architecture, do not replace it). Run the architecture checks, commit, then `botss doc submit architecture` and finish.",
   plan:
@@ -123,6 +123,8 @@ export interface RunPromptInput {
   diffStat?: string | null;
   agent?: string;
   roleTitle?: string;
+  /** Learning memory: lessons that match this run's role and files. */
+  lessons?: string[];
 }
 
 export function buildRunPrompt(i: RunPromptInput): string {
@@ -142,6 +144,13 @@ export function buildRunPrompt(i: RunPromptInput): string {
     parts.push(`## Task ${i.task.id}\n\n\`\`\`markdown\n${i.task.source || `# ${i.task.title}\n\n${i.task.body}`}\n\`\`\``);
   } else if (i.task?.body) {
     parts.push(i.task.body);
+  }
+  if (i.lessons?.length) {
+    parts.push(
+      `## Lessons from this project (follow them)\n\n${i.lessons.map((l) => `- ${l}`).join("\n")}\n\nWhen you find a mistake that is likely to happen again (a convention, a trap, a fix that worked), record it in one line: \`botss lesson "<rule>" --paths "<glob>"\`.`,
+    );
+  } else {
+    parts.push('When you find a mistake that is likely to happen again (a convention, a trap, a fix that worked), record it in one line: `botss lesson "<rule>" --paths "<glob>"`.');
   }
   if (i.handoff) parts.push(`## Handoff from the engineer\n\n${i.handoff}`);
   if (i.diffStat) parts.push(`## Diff stat (base...head)\n\n\`\`\`\n${i.diffStat}\n\`\`\``);

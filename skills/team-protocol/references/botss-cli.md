@@ -76,6 +76,15 @@ botss decision show D-007
 
 Decisions are stored in `.botss/docs/decisions/` and shown on the dashboard. Record a decision when the choice constrains other agents or will surprise a future reader.
 
+## Lessons (project memory)
+
+```bash
+botss lesson "Use the shared <Dialog>, never window.confirm" --paths "frontend/src/**" --roles frontend
+botss lesson "Run alembic upgrade before backend tests or they fail with missing tables" --paths "backend/**"
+```
+
+One rule per lesson, under 300 characters. Record a lesson when you hit (or had to fix) a mistake that a teammate is likely to make again: a project convention, a trap in the tooling, a fix that worked. Lessons are shown to every later run whose role and files match, so they save the next agent a review round. Do not record task-specific facts; those go in your handoff.
+
 ## Documents
 
 ```bash

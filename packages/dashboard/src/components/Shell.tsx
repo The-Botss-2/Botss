@@ -1,3 +1,4 @@
+import { useNeedsYou } from "../screens/NeedsYou";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { useLive, useEvents } from "../lib/live";
@@ -10,6 +11,7 @@ import { RequestChangeButton } from "./Changes";
 import { Bell, NotificationToasts } from "./Notifications";
 
 export const SCREENS: { id: string; label: string; icon: string }[] = [
+  { id: "needs", label: "Needs you", icon: "questions" },
   { id: "idea", label: "Idea", icon: "idea" },
   { id: "questions", label: "Questions", icon: "questions" },
   { id: "docs", label: "Documents", icon: "docs" },
@@ -19,6 +21,7 @@ export const SCREENS: { id: string; label: string; icon: string }[] = [
   { id: "agents", label: "Agents", icon: "agents" },
   { id: "feed", label: "Team feed", icon: "feed" },
   { id: "preview", label: "Preview", icon: "preview" },
+  { id: "memory", label: "Memory", icon: "docs" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -47,6 +50,7 @@ export function Shell({ pid, screen, children }: { pid: string; screen: string; 
   const project = useProject(pid);
   const p = project.data;
   const alerts = p?.state.alerts?.length ?? 0;
+  const needs = useNeedsYou(pid).data?.length ?? 0;
 
   return (
     <div className="grid h-full grid-cols-[208px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] max-[1100px]:grid-cols-[56px_minmax(0,1fr)]">
@@ -65,7 +69,9 @@ export function Shell({ pid, screen, children }: { pid: string; screen: string; 
         {SCREENS.map((s) => {
           const active = screen === s.id;
           const badge =
-            s.id === "questions"
+            s.id === "needs"
+              ? needs
+              : s.id === "questions"
               ? (p?.openQuestions ?? 0) + alerts
               : s.id === "agents"
                 ? (p?.activeRuns ?? 0)
@@ -84,8 +90,8 @@ export function Shell({ pid, screen, children }: { pid: string; screen: string; 
                 <span className="max-[1100px]:absolute max-[1100px]:-top-0.5 max-[1100px]:right-0">
                   <CountBadge
                     n={badge}
-                    tone={s.id === "questions" ? "danger" : "accent"}
-                    label={s.id === "questions" ? `${badge} need you` : `${badge} running`}
+                    tone={s.id === "questions" || s.id === "needs" ? "danger" : "accent"}
+                    label={s.id === "questions" || s.id === "needs" ? `${badge} need you` : `${badge} running`}
                   />
                 </span>
               )}
